@@ -1,0 +1,247 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="1254" height="1254" viewBox="0 0 1254 1254"
+     role="img" aria-labelledby="title desc">
+  <title id="title">Red owl mascot</title>
+  <desc id="desc">An animated editable vector of a round red owl: it floats gently while its pointed ears sway, wings flap, and turquoise pupils blink; hovering pauses the float, enlarges the owl, and changes its red shadow to a turquoise glow.</desc>
+
+  <defs>
+    <radialGradient id="bodyGradient" gradientUnits="userSpaceOnUse"
+                    cx="420" cy="220" r="940" fx="385" fy="175">
+      <stop offset="0" stop-color="#f1514b"/>
+      <stop offset="0.34" stop-color="#df4a44"/>
+      <stop offset="0.72" stop-color="#c93d39"/>
+      <stop offset="1" stop-color="#bf3634"/>
+    </radialGradient>
+
+    <linearGradient id="bodyDepth" gradientUnits="userSpaceOnUse"
+                    x1="627" y1="150" x2="627" y2="1080">
+      <stop offset="0" stop-color="#ff8b79" stop-opacity="0.05"/>
+      <stop offset="0.5" stop-color="#8f1518" stop-opacity="0.02"/>
+      <stop offset="1" stop-color="#761416" stop-opacity="0.08"/>
+    </linearGradient>
+
+    <linearGradient id="rightShade" gradientUnits="userSpaceOnUse"
+                    x1="300" y1="500" x2="1030" y2="630">
+      <stop offset="0.45" stop-color="#681013" stop-opacity="0"/>
+      <stop offset="1" stop-color="#681013" stop-opacity="0.08"/>
+    </linearGradient>
+
+    <radialGradient id="leftWingGradient" gradientUnits="userSpaceOnUse"
+                    cx="205" cy="535" r="410" fx="205" fy="510">
+      <stop offset="0" stop-color="#f34b46"/>
+      <stop offset="0.35" stop-color="#df4742"/>
+      <stop offset="0.68" stop-color="#d13c39"/>
+      <stop offset="1" stop-color="#c43132"/>
+    </radialGradient>
+
+    <radialGradient id="rightWingGradient" gradientUnits="userSpaceOnUse"
+                    cx="954" cy="526" r="430" fx="984" fy="508">
+      <stop offset="0" stop-color="#f24a45"/>
+      <stop offset="0.32" stop-color="#d1413b"/>
+      <stop offset="0.75" stop-color="#c33433"/>
+      <stop offset="1" stop-color="#b72e30"/>
+    </radialGradient>
+
+    <radialGradient id="eyeGradient" cx="35%" cy="30%" r="78%">
+      <stop offset="0" stop-color="#091b29"/>
+      <stop offset="0.62" stop-color="#020b15"/>
+      <stop offset="1" stop-color="#00050c"/>
+    </radialGradient>
+
+    <radialGradient id="pupilGradient" cx="35%" cy="28%" r="75%">
+      <stop offset="0" stop-color="#02ead3"/>
+      <stop offset="0.58" stop-color="#00dfca"/>
+      <stop offset="1" stop-color="#00cbbd"/>
+    </radialGradient>
+
+    <linearGradient id="beakGradient" gradientUnits="userSpaceOnUse"
+                    x1="627" y1="490" x2="627" y2="580">
+      <stop offset="0" stop-color="#ff735e"/>
+      <stop offset="0.42" stop-color="#fb6653"/>
+      <stop offset="1" stop-color="#ef4d42"/>
+    </linearGradient>
+
+    <radialGradient id="leftFootGradient" gradientUnits="userSpaceOnUse"
+                    cx="480" cy="1030" r="115">
+      <stop offset="0" stop-color="#ec4743"/>
+      <stop offset="0.6" stop-color="#dc3d3b"/>
+      <stop offset="1" stop-color="#c62f31"/>
+    </radialGradient>
+
+    <radialGradient id="rightFootGradient" gradientUnits="userSpaceOnUse"
+                    cx="730" cy="1030" r="125">
+      <stop offset="0" stop-color="#e84642"/>
+      <stop offset="0.6" stop-color="#d83b39"/>
+      <stop offset="1" stop-color="#c12e30"/>
+    </radialGradient>
+
+    <filter id="wingShadowBlur" x="-30%" y="-25%" width="160%" height="150%"
+            color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="9"/>
+    </filter>
+
+    <filter id="eyeShadow" x="-30%" y="-30%" width="160%" height="170%"
+            color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="3" stdDeviation="3"
+                    flood-color="#681215" flood-opacity="0.25"/>
+    </filter>
+
+    <clipPath id="bodyClip">
+      <path d="M321 293 C348 245 389 214 439 203 C492 171 559 155 620 153 C686 151 760 171 815 202 C865 214 906 246 933 293 C995 362 1032 451 1046 542 C1056 607 1054 680 1040 744 C1019 840 972 928 899 989 C830 1046 744 1073 628 1073 C511 1073 426 1047 355 989 C282 930 234 842 213 749 C199 687 198 613 209 547 C224 451 260 363 321 293 Z"/>
+    </clipPath>
+    <clipPath id="leftEarClip">
+      <path d="M439 203 C405 192 378 174 350 151 C339 142 329 137 319 142 C299 154 300 206 309 247 C316 282 321 315 342 338 C369 368 411 376 452 365 C495 354 526 334 536 307 C545 282 532 262 510 245 C488 227 463 213 439 203 Z"/>
+    </clipPath>
+    <clipPath id="rightEarClip">
+      <path d="M815 203 C849 192 876 174 904 151 C915 142 925 137 935 142 C955 154 954 206 945 247 C938 282 933 315 912 338 C885 368 843 376 802 365 C759 354 728 334 718 307 C709 282 722 262 744 245 C766 227 791 213 815 203 Z"/>
+    </clipPath>
+      <style>
+      svg { overflow: visible; }
+      .owl-icon { animation: owl-float 4s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+      .owl-art { filter: drop-shadow(0 0 20px rgba(255,77,77,.4)); transform-box: fill-box; transform-origin: center; transform: scale(1); transition: transform .3s ease, filter .3s ease; }
+      .owl-icon:hover { animation-play-state: paused; }
+      .owl-icon:hover .owl-art { filter: drop-shadow(0 0 30px rgba(0,229,204,.6)); transform: scale(1.1); }
+      .ear-left, .ear-right { animation-duration: 2s; animation-timing-function: ease-in-out; animation-iteration-count: infinite; transform-box: view-box; }
+      .ear-left { animation-name: owl-ear-left; transform-origin: 405px 260px; }
+      .ear-right { animation-name: owl-ear-right; transform-origin: 849px 260px; }
+      #left-wing, #right-wing { animation-duration: 4s; animation-timing-function: ease-in-out; animation-iteration-count: infinite; transform-box: view-box; }
+      #left-wing { animation-name: owl-wing-left; transform-origin: 337px 582px; }
+      #right-wing { animation-name: owl-wing-right; transform-origin: 917px 582px; }
+      .pupil-glow { animation: owl-blink 3s ease-in-out infinite; }
+      @keyframes owl-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3%); } }
+      @keyframes owl-ear-left { 0%, 100% { transform: rotate(0); } 25% { transform: rotate(-3deg); } 75% { transform: rotate(3deg); } }
+      @keyframes owl-ear-right { 0%, 100% { transform: rotate(0); } 25% { transform: rotate(3deg); } 75% { transform: rotate(-3deg); } }
+      @keyframes owl-wing-left { 0%, 74%, 86%, 96%, 100% { transform: rotate(0); } 80%, 91% { transform: rotate(30deg); } }
+      @keyframes owl-wing-right { 0%, 74%, 86%, 96%, 100% { transform: rotate(0); } 80%, 91% { transform: rotate(-30deg); } }
+      @keyframes owl-blink { 0%, 86%, 94%, 100% { opacity: 1; } 90% { opacity: .3; } }
+      @media (prefers-reduced-motion: reduce) {
+        .owl-icon, .ear-left, .ear-right, #left-wing, #right-wing, .pupil-glow { animation: none !important; }
+        .owl-art { transform: none; transition: none; }
+        .owl-icon:hover .owl-art { transform: none; filter: drop-shadow(0 0 30px rgba(0,229,204,.6)); }
+      }
+    </style>
+  </defs>
+
+  <g class="owl-icon">
+    <g class="owl-art">
+  <!-- Body and independently animated pointed ears -->
+  <g class="ear-left">
+    <path class="ear-shape" d="M439 203 C405 192 378 174 350 151 C339 142 329 137 319 142 C299 154 300 206 309 247 C316 282 321 315 342 338 C369 368 411 376 452 365 C495 354 526 334 536 307 C545 282 532 262 510 245 C488 227 463 213 439 203 Z" fill="url(#bodyGradient)" vector-effect="non-scaling-stroke"/>
+    <rect x="236" y="130" width="360" height="300" fill="url(#bodyDepth)" clip-path="url(#leftEarClip)"/>
+    <rect x="236" y="130" width="360" height="300" fill="url(#rightShade)" clip-path="url(#leftEarClip)"/>
+  </g>
+  <g class="ear-right">
+    <path class="ear-shape" d="M815 203 C849 192 876 174 904 151 C915 142 925 137 935 142 C955 154 954 206 945 247 C938 282 933 315 912 338 C885 368 843 376 802 365 C759 354 728 334 718 307 C709 282 722 262 744 245 C766 227 791 213 815 203 Z" fill="url(#bodyGradient)" vector-effect="non-scaling-stroke"/>
+    <rect x="658" y="130" width="360" height="300" fill="url(#bodyDepth)" clip-path="url(#rightEarClip)"/>
+    <rect x="658" y="130" width="360" height="300" fill="url(#rightShade)" clip-path="url(#rightEarClip)"/>
+  </g>
+  <g id="body">
+    <path d="M321 293 C348 245 389 214 439 203 C492 171 559 155 620 153 C686 151 760 171 815 202 C865 214 906 246 933 293 C995 362 1032 451 1046 542 C1056 607 1054 680 1040 744 C1019 840 972 928 899 989 C830 1046 744 1073 628 1073 C511 1073 426 1047 355 989 C282 930 234 842 213 749 C199 687 198 613 209 547 C224 451 260 363 321 293 Z" fill="url(#bodyGradient)" vector-effect="non-scaling-stroke"/>
+    <rect x="198" y="140" width="860" height="935" fill="url(#bodyDepth)" clip-path="url(#bodyClip)"/>
+    <rect x="198" y="140" width="860" height="935" fill="url(#rightShade)" clip-path="url(#bodyClip)"/>
+  </g>
+
+  <!-- Side wings -->
+  <g id="wings">
+    <g id="left-wing">
+      <path d="M255 494
+      C225 491 201 519 184 560
+      C169 600 165 649 169 699
+      C173 767 193 841 230 884
+      C241 897 253 899 264 891
+      C298 864 327 817 344 767
+      C366 702 359 638 337 582
+      C318 534 283 495 255 494 Z"
+      fill="#771416" fill-opacity="0.2"
+      transform="translate(8 7)"
+      filter="url(#wingShadowBlur)" clip-path="url(#bodyClip)"/>
+      <path
+      d="M255 494
+      C225 491 201 519 184 560
+      C169 600 165 649 169 699
+      C173 767 193 841 230 884
+      C241 897 253 899 264 891
+      C298 864 327 817 344 767
+      C366 702 359 638 337 582
+      C318 534 283 495 255 494 Z"
+      fill="url(#leftWingGradient)"
+      vector-effect="non-scaling-stroke"/>
+    </g>
+    <g id="right-wing">
+      <path d="M1000 494
+      C1029 491 1053 519 1070 560
+      C1084 600 1088 649 1084 699
+      C1081 767 1061 841 1024 884
+      C1013 897 1001 899 990 891
+      C956 864 927 817 910 767
+      C888 702 895 638 917 582
+      C936 534 971 495 1000 494 Z"
+      fill="#771416" fill-opacity="0.2"
+      transform="translate(-8 7)"
+      filter="url(#wingShadowBlur)" clip-path="url(#bodyClip)"/>
+      <path
+      d="M1000 494
+      C1029 491 1053 519 1070 560
+      C1084 600 1088 649 1084 699
+      C1081 767 1061 841 1024 884
+      C1013 897 1001 899 990 891
+      C956 864 927 817 910 767
+      C888 702 895 638 917 582
+      C936 534 971 495 1000 494 Z"
+      fill="url(#rightWingGradient)"
+      vector-effect="non-scaling-stroke"/>
+    </g>
+  </g>
+
+  <!-- Eyes -->
+  <g id="eyes" filter="url(#eyeShadow)">
+    <circle cx="489" cy="420" r="55" fill="url(#eyeGradient)"/>
+    <circle cx="767" cy="420" r="55" fill="url(#eyeGradient)"/>
+    <circle class="pupil-glow" cx="499" cy="411" r="19" fill="url(#pupilGradient)"/>
+    <circle class="pupil-glow" cx="776" cy="411" r="19" fill="url(#pupilGradient)"/>
+  </g>
+
+  <!-- Beak -->
+  <path id="beak"
+        d="M595 491
+           C588 491 584 494 583 499
+           C582 503 584 509 587 515
+           L617 572
+           C620 578 624 580 628 579
+           C632 579 635 575 638 570
+           L669 511
+           C672 505 672 500 669 496
+           C666 492 662 491 655 491 Z"
+        fill="url(#beakGradient)"/>
+
+  <!-- Feet -->
+  <g id="feet">
+    <path id="left-foot"
+          d="M505 1019
+             C472 1019 443 1044 441 1076
+             C440 1090 447 1100 458 1102
+             C469 1103 479 1095 484 1084
+             C489 1096 496 1101 506 1101
+             C517 1101 525 1095 529 1084
+             C535 1095 543 1101 553 1101
+             C563 1101 569 1093 567 1081
+             C565 1047 539 1019 505 1019 Z"
+          fill="url(#leftFootGradient)"
+          vector-effect="non-scaling-stroke"/>
+    <path id="right-foot"
+          d="M749 1019
+             C716 1019 689 1046 687 1080
+             C686 1092 692 1101 702 1102
+             C712 1102 720 1096 725 1084
+             C730 1096 738 1101 748 1101
+             C759 1101 767 1095 772 1084
+             C777 1095 786 1102 796 1102
+             C807 1101 814 1092 812 1079
+             C810 1046 783 1019 749 1019 Z"
+          fill="url(#rightFootGradient)"
+          vector-effect="non-scaling-stroke"/>
+  </g>
+    </g>
+  </g>
+</svg>
