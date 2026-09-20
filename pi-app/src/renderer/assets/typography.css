@@ -1,0 +1,42 @@
+/* Use the user's installed fonts for a local preview; do not embed Trial files. */
+@font-face {
+  font-family: "GT Eesti Local";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: local("GT Eesti Text Trial Rg");
+}
+
+@font-face {
+  font-family: "GT Eesti Local";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: local("GT Eesti Text Trial Md");
+}
+
+@font-face {
+  font-family: "GT Eesti Local";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: local("GT Eesti Text Trial Bd");
+}
+
+:root {
+  /*
+   * Unbounded, Inter and Noto Sans SC are bundled locally under OFL-1.1. Keep the
+   * explicit Chinese face ahead of the generic fallback for mixed-language UI.
+   */
+  --oc-font-brand: "Unbounded Variable", "Noto Sans SC Variable", "Segoe UI", "Microsoft YaHei UI", sans-serif;
+  --oc-font-body: "GT Eesti Local", "Inter Variable", "Noto Sans SC Variable", "Segoe UI", "Microsoft YaHei UI", sans-serif;
+  --oc-font-display: var(--oc-font-body);
+  --oc-font-serif: Georgia, "Times New Roman", "Noto Serif CJK SC", "SimSun", serif;
+  --oc-font-mono: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Consolas, monospace;
+
+  --font-brand: var(--oc-font-brand);
+  --font-display: var(--oc-font-display);
+  --font-body: var(--oc-font-body);
+  --font-serif: var(--oc-font-serif);
+  --font-mono: var(--oc-font-mono);
+}

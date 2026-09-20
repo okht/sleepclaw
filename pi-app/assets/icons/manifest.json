@@ -1,0 +1,37 @@
+{
+  "source": "src/renderer/assets/owl-mark.svg",
+  "sourceSha256": "609bf6dfaaa75ee4cc15a77df3087fc8b7340b83280a2e83038a0702396eac10",
+  "renderer": "Electron 44.4.3 / Chromium 152.0.7977.130",
+  "framing": {
+    "method": "nontransparent-source-bounds",
+    "fillRatio": 0.92,
+    "sourceBounds": {
+      "x": 167,
+      "y": 141,
+      "width": 919,
+      "height": 961
+    },
+    "viewBox": {
+      "x": 104.21739130434787,
+      "y": 99.21739130434787,
+      "width": 1044.5652173913043,
+      "height": 1044.5652173913043
+    }
+  },
+  "icoSizes": [
+    16,
+    20,
+    24,
+    32,
+    40,
+    48,
+    64,
+    128,
+    256
+  ],
+  "pngSize": 512,
+  "sha256": {
+    "sleepclaw.ico": "3add0cc4f241ff6af765ab27dad8bfc2368faf0497ee23b9c82ba936b058a500",
+    "sleepclaw.png": "3e88ea0f6ef3584741a4f4e346d496c3927346b2164830291b8547315f9972dc"
+  }
+}

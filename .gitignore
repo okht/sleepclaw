@@ -11,3 +11,38 @@ Desktop.ini
 # Editor files
 .idea/
 .vscode/
+
+# Pi application dependencies and generated build/runtime files
+pi-app/node_modules/
+pi-app/runtime/
+pi-app/runtime-bundle/
+pi-app/.webpack/
+pi-app/out/
+pi-app/build/
+pi-app/dist/
+pi-app/coverage/
+pi-app/.smoke/
+pi-app/output/
+.playwright-cli/
+
+# Local application state, credentials, and private health imports
+sleepclaw-home/
+.sleepclaw*/
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+credentials.bin
+credentials*.json
+apple_health_export/
+*.xml
+*.zip
+*.edf
+*.bdf
+*.mat
+
+# Deliberately published, synthetic screenshots must remain trackable.
+!assets/demo/
+!assets/demo/*.png
