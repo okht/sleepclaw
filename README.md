@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./assets/sleepclaw-lockup.svg" alt="SleepClaw 红色猫头鹰和字标" width="820">
+  <img src="https://raw.githubusercontent.com/okht/sleepclaw/a36dd832b7c18de4b2794b5655cab7ae685b1f17/assets/sleepclaw-lockup.svg" alt="SleepClaw 红色猫头鹰和字标" width="820">
 </p>
 
 <p align="center">
