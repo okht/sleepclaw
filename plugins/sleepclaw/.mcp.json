@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "sleepclaw": {
+      "command": "node",
+      "args": [
+        "-e",
+        "const root = process.argv[1]; const file = require('node:path').resolve(root === '$' + '{CLAUDE_PLUGIN_ROOT}' ? process.cwd() : root, 'runtime/sleepclaw-tools.cjs'); process.argv[1] = file; require(file);",
+        "${CLAUDE_PLUGIN_ROOT}",
+        "mcp"
+      ],
+      "cwd": "."
+    }
+  }
+}

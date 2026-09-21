@@ -1,14 +1,11 @@
 import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync, rmSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
-import { randomUUID } from 'node:crypto';
-import { Type } from 'typebox';
 import { defineTool, SessionManager, type AgentSession } from '@earendil-works/pi-coding-agent';
 import { SleepStore } from './domain/index';
-import { analyzeRecords } from './health/index';
+import { createSleepTools, sleepContext } from './tools';
 import { makeSession, testConnection, validateModelConfig, chatMessages, publicError } from './agent';
 import type { AppSnapshot, AppEvent, ModelConfig, Language, FactValue, SleepScope, Feedback } from './shared/types';
 
-const factSchema = Type.Object({ topic: Type.String(), value: Type.Union([Type.String(), Type.Number(), Type.Boolean(), Type.Null()]), scope: Type.Union([Type.Literal('profile'), Type.Literal('sleep')]), status: Type.Optional(Type.Union([Type.Literal('known'), Type.Literal('unknown')])) });
 const result = (value: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(value) }], details: {} });
 interface SavedSettings { language: Language; activeId?: string; model?: Omit<ModelConfig, 'apiKey'> }
 
@@ -43,34 +40,13 @@ export class SleepApp {
   private publish(): void { this.emit({ type: 'state', state: this.snapshot() }); }
   private activeId(): string { const id = this.snapshot().active?.id; if (!id) throw new Error('TARGET_REQUIRED'); return id; }
   private context(): unknown {
-    const snapshot = this.snapshot();
-    return { language: this.settings.language, investigation: snapshot.active, facts: snapshot.facts, pendingQuestion: snapshot.question,
-      candidates: snapshot.candidates.slice(0, 25), imports: snapshot.imports.map(i => ({ recordCount: i.recordCount, sources: i.sources, start: i.start, end: i.end, warnings: i.warnings })),
-      feedback: snapshot.feedback.slice(-15), reports: snapshot.reports.filter(r => r.investigationId === snapshot.active?.id).slice(0, 1).map(r => r.status === 'stale' ? { id: r.id, status: r.status } : { id: r.id, status: r.status, metrics: r.metrics, action: r.action }) };
+    return sleepContext(this.store, this.activeId());
   }
   private tools() {
-    return [
-      defineTool({ name: 'sleep_context', label: 'Sleep context', description: 'Read current facts, pending question and available episode candidates. Current facts supersede earlier messages.', parameters: Type.Object({}), execute: async () => result(this.context()) }),
-      defineTool({ name: 'sleep_fact', label: 'Save a fact', description: 'Record only explicitly user-provided facts; separate profile and this sleep. Unknown/skip is not false.', parameters: factSchema,
-        execute: async (_id, params) => { const saved = this.store.setFact(this.activeId(), params); this.publish(); return result(saved); } }),
-      defineTool({ name: 'sleep_question', label: 'One follow-up', description: 'Persist exactly one relevant next question before asking it. Use current user language.', parameters: Type.Object({ topic: Type.String(), text: Type.String(), reason: Type.Optional(Type.String()), scope: Type.Union([Type.Literal('profile'), Type.Literal('sleep')]) }),
-        execute: async (_id, params) => { const saved = this.store.saveQuestion(this.activeId(), { id: randomUUID(), ...params }); this.publish(); return result(saved); } }),
-      defineTool({ name: 'sleep_target', label: 'Select sleep', description: 'Set time range/source only when the user has explicitly selected or unambiguously specified this episode.', parameters: Type.Object({ start: Type.String(), end: Type.String(), source: Type.String(), scope: Type.Optional(Type.Union([Type.Literal('main'), Type.Literal('nap'), Type.Literal('segment')])) }),
-        execute: async (_id, params) => { const target = this.store.setTarget(this.activeId(), params); this.publish(); return result(target); } }),
-      defineTool({ name: 'sleep_data_query', label: 'Look closer at data', description: 'Read bounded observations and computed metrics for a window within the selected sleep episode, optionally by measurement type. No arbitrary SQL.', parameters: Type.Object({ start: Type.Optional(Type.String()), end: Type.Optional(Type.String()), type: Type.Optional(Type.Union([Type.Literal('sleep'), Type.Literal('heartRate'), Type.Literal('hrv'), Type.Literal('respiratoryRate'), Type.Literal('oxygenSaturation')])) }),
-        execute: async (_id, params) => {
-          const active = this.store.getInvestigation(this.activeId());
-          if (!active.start || !active.end || !active.source) throw new Error('TARGET_REQUIRED');
-          const start = params.start ?? active.start; const end = params.end ?? active.end;
-          if (Date.parse(start) < Date.parse(active.start) || Date.parse(end) > Date.parse(active.end) || Date.parse(end) <= Date.parse(start)) throw new Error('INVALID_QUERY_RANGE');
-          const records = this.store.getRecords({ start, end, source: active.source, type: params.type });
-          return result({ analysis: analyzeRecords(records, { start, end, source: active.source }), observations: records.slice(0, 200), truncated: records.length > 200 });
-        } }),
-      defineTool({ name: 'sleep_report', label: 'Create report', description: 'Create a versioned report. Tools provide fixed metrics; supply concise AI explanation and one feasible action as prose. Do not fabricate metrics or score.', parameters: Type.Object({ interpretation: Type.String({ maxLength: 16000 }), action: Type.String({ maxLength: 2000 }) }),
-        execute: async (_id, params) => { const report = this.store.buildReport(this.activeId(), params.interpretation, params.action); this.publish(); return result(report); } }),
-      defineTool({ name: 'sleep_feedback', label: 'Remember action feedback', description: 'Save the user expressed response to an action.', parameters: Type.Object({ reportId: Type.String(), choice: Type.Union([Type.Literal('accepted'), Type.Literal('cannot'), Type.Literal('unhelpful'), Type.Literal('later')]), note: Type.Optional(Type.String()) }),
-        execute: async (_id, params) => result(this.store.recordFeedback(params.reportId, params.choice, params.note)) }),
-    ];
+    return createSleepTools(this.store, { investigationId: () => this.activeId(), onChange: () => this.publish() }).map(tool => defineTool({
+      name: tool.name, label: tool.label, description: tool.description, parameters: tool.parameters,
+      execute: async (_id, params, signal) => result(await tool.execute(params, signal)),
+    }));
   }
   private async getSession(): Promise<AgentSession> {
     if (!this.config) throw new Error('MODEL_REQUIRED');

@@ -11,6 +11,7 @@
         "@earendil-works/pi-ai": "0.86.1",
         "@earendil-works/pi-coding-agent": "0.86.1",
         "sax": "1.6.1",
+        "simple-statistics": "7.12.0",
         "typebox": "1.3.34",
         "yauzl": "3.4.0"
       }
@@ -3023,6 +3024,13 @@
           "optional": true
         }
       }
+    },
+    "node_modules/simple-statistics": {
+      "version": "7.12.0",
+      "resolved": "https://registry.npmmirror.com/simple-statistics/-/simple-statistics-7.12.0.tgz",
+      "integrity": "sha512-ESS3eJRxeQe8+p8R67nMGtl+vSziJLTqdnPcd+psKi2Xn/TX5PW5z0YwBxa8P3nSzgZzBI5sf7SvUdK8imL79Q==",
+      "license": "ISC",
+      "engines": { "node": "*" }
     },
     "node_modules/yauzl": {
       "version": "3.4.0",

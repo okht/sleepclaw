@@ -2,10 +2,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const root = path.resolve(__dirname, '..');
+const runtimeDependencies = ['@earendil-works/pi-coding-agent','@earendil-works/pi-ai','typebox','sax','yauzl','simple-statistics'];
+exports.dependencies = runtimeDependencies;
 async function prepare() {
   const dir = path.join(root, 'runtime'); fs.mkdirSync(dir, { recursive: true });
   const source = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
-  const names = ['@earendil-works/pi-coding-agent','@earendil-works/pi-ai','typebox','sax','yauzl'];
+  const names = runtimeDependencies;
   const manifest = JSON.stringify({ name: 'sleepclaw-runtime', version: source.version, private: true, type: 'module', dependencies: Object.fromEntries(names.map(n => [n, source.dependencies[n]])) }, null, 2);
   const manifestFile = path.join(dir, 'package.json');
   const changed = !fs.existsSync(manifestFile) || fs.readFileSync(manifestFile, 'utf8') !== manifest;

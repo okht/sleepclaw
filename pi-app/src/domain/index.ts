@@ -3,12 +3,12 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync, renameSync, rmSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { analyzeRecords, identifyCandidates, importAppleHealth } from '../health/index.js';
-import type { Analysis, DomainSnapshot, Fact, FactValue, Feedback, HealthRecord, ImportSummary, Investigation, Language, Question, Report, SleepScope } from '../shared/types.js';
+import type { Analysis, DomainSnapshot, Fact, FactInput, FactValue, Feedback, HealthRecord, ImportSummary, Investigation, InvestigationPlan, InvestigationPlanInput, Language, Question, Report, SleepScope } from '../shared/types.js';
 import { questionDefinitions } from './questions.js';
 import { buildTimeline, renderReport, reportContent } from './report.js';
+import { inferFactUncertainty, validateFactUncertainty, validateInvestigationPlan } from './investigation.js';
 
 type Row = Record<string, unknown>;
-type FactInput = { topic: string; value: FactValue; status?: Fact['status']; scope: Fact['scope'] };
 type RecordQuery = { start?: string; end?: string; source?: string; type?: HealthRecord['type'] };
 const MAX_QUERY_RECORDS = 50_000;
 const iso = () => new Date().toISOString();
@@ -65,6 +65,15 @@ export class SleepStore {
   }
   selectInvestigation(id: string): Investigation { return this.getInvestigation(id); }
 
+  savePlan(id: string, input: InvestigationPlanInput): InvestigationPlan {
+    this.writable();
+    const investigation = this.getInvestigation(id);
+    const plan = validateInvestigationPlan(input, investigation.revision);
+    investigation.plan = plan;
+    this.saveInvestigation(investigation);
+    return plan;
+  }
+
   setLanguage(id: string, language: Language): Investigation {
     this.writable();
     if (!['zh', 'en'].includes(language)) throw new Error('INVALID_LANGUAGE');
@@ -102,6 +111,7 @@ export class SleepStore {
   private invalidate(id: string): void {
     const investigation = this.getInvestigation(id);
     investigation.revision += 1;
+    // A retained plan with an earlier revision is stale; guidance will not use its steps.
     investigation.status = 'collecting';
     this.saveInvestigation(investigation);
     for (const row of this.db.prepare('SELECT data FROM reports WHERE investigation_id=?').all(id)) {
@@ -178,10 +188,13 @@ export class SleepStore {
     if (typeof input.value === 'number' && !Number.isFinite(input.value)) throw new Error('INVALID_FACT_VALUE');
     if (!['string', 'number', 'boolean'].includes(typeof input.value) && input.value !== null) throw new Error('INVALID_FACT_VALUE');
     if (typeof input.value === 'string' && input.value.length > 20_000) throw new Error('FACT_TOO_LONG');
+    const status = input.status ?? (input.value === null ? 'unknown' : 'known');
+    const originalUnknown = status === 'unknown' && typeof input.value === 'string' && input.value.trim()
+      ? { kind: 'uncertain' as const, original: input.value } : undefined;
+    const uncertainty = validateFactUncertainty(input.uncertainty === undefined ? originalUnknown : input.uncertainty, input.value);
     const owner = input.scope === 'profile' ? 'profile' : id;
     const previous = parse<Fact>(this.db.prepare('SELECT data FROM facts WHERE owner=? AND topic=?').get(owner, input.topic));
-    const status = input.status ?? (input.value === null ? 'unknown' : 'known');
-    const fact: Fact = { id: previous?.id ?? randomUUID(), topic: input.topic, value: status === 'unknown' ? null : input.value, status, scope: input.scope, investigationId: input.scope === 'sleep' ? id : undefined, revision: (previous?.revision ?? 0) + 1, updatedAt: iso() };
+    const fact: Fact = { id: previous?.id ?? randomUUID(), topic: input.topic, value: status === 'unknown' ? null : input.value, status, scope: input.scope, ...(uncertainty ? { uncertainty } : {}), investigationId: input.scope === 'sleep' ? id : undefined, revision: (previous?.revision ?? 0) + 1, updatedAt: iso() };
     this.transaction(() => {
       this.db.prepare('INSERT OR REPLACE INTO facts (id,owner,topic,data) VALUES (?,?,?,?)').run(fact.id, owner, input.topic, JSON.stringify(fact));
       const affected = input.scope === 'profile' ? this.rows<Investigation>('investigations') : [this.getInvestigation(id)];
@@ -220,10 +233,11 @@ export class SleepStore {
   answer(id: string, value: FactValue, skip = false): Fact {
     const question = this.getInvestigation(id).pendingQuestion ?? this.nextQuestion(id);
     if (!question) throw new Error('NO_PENDING_QUESTION');
+    const uncertainty = inferFactUncertainty(value);
     // Plain numeric text entered into a known numeric question is explicit user input.
     // Narrative answers and unknown values are kept verbatim, without guessing a number.
     if (!skip && typeof value === 'string' && ['sleep_duration_hours', 'remembered_awakenings'].includes(question.topic) && /^(?:\d+(?:\.\d*)?|\.\d+)$/.test(value.trim())) value = Number(value.trim());
-    const fact = this.setFact(id, { topic: question.topic, scope: question.scope, value, status: skip || value === null ? 'unknown' : 'known' });
+    const fact = this.setFact(id, { topic: question.topic, scope: question.scope, value, status: skip || value === null ? 'unknown' : 'known', ...(uncertainty ? { uncertainty } : {}) });
     this.nextQuestion(id);
     return fact;
   }
@@ -289,6 +303,7 @@ export class SleepStore {
       this.deleteLinkedReports(affected.map(item => item.id));
       for (const investigation of affected) {
         delete investigation.pendingQuestion;
+        delete investigation.plan;
         this.saveInvestigation(investigation);
         this.invalidate(investigation.id);
       }
@@ -303,6 +318,7 @@ export class SleepStore {
       this.deleteLinkedReports(investigations.map(item => item.id));
       for (const investigation of investigations) {
         delete investigation.pendingQuestion;
+        delete investigation.plan;
         this.saveInvestigation(investigation);
         this.invalidate(investigation.id);
       }
@@ -342,6 +358,7 @@ export class SleepStore {
       // unselected investigation can have a follow-up quoting the removed import.
       for (const investigation of investigations) {
         delete investigation.pendingQuestion;
+        delete investigation.plan;
         this.saveInvestigation(investigation);
       }
       for (const investigation of affected) this.invalidate(investigation.id);

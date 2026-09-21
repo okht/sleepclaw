@@ -131,7 +131,7 @@ function tool(response: ServerResponse, id: string, name: string, args: Record<s
   frame(response, {}, 'tool_calls'); response.end('data: [DONE]\n\n');
 }
 function metric(metrics: Metric[], key: string): number | null | undefined { return metrics.find(item => item.key === key)?.value; }
-const allowedTools = new Set(['sleep_context', 'sleep_fact', 'sleep_question', 'sleep_target', 'sleep_data_query', 'sleep_report', 'sleep_feedback']);
+const allowedTools = new Set(['sleep_context', 'sleep_fact', 'sleep_question', 'sleep_target', 'sleep_data_query', 'sleep_report', 'sleep_feedback', 'sleep_plan', 'sleep_health_analysis']);
 
 /** Bind only to loopback. Any failed check closes the fixture to subsequent requests. */
 export async function createDemoServer(): Promise<{ server: Server; baseUrl: string; status: () => { requests: number; step: number; failed: boolean } }> {

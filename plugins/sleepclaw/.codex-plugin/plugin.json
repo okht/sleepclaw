@@ -1,0 +1,20 @@
+{
+  "name": "sleepclaw",
+  "version": "0.2.0",
+  "description": "Local sleep investigation, Apple Health analysis tools and evidence-aware follow-up.",
+  "author": {
+    "name": "SleepClaw contributors"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "SleepClaw",
+    "shortDescription": "Investigate sleep with local health data.",
+    "longDescription": "Import selected Apple Health exports locally, clarify uncertain recollections, inspect sleep and physiology evidence, and save a versioned report with one action. Uses the host assistant; no second model connection required.",
+    "developerName": "SleepClaw contributors",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"],
+    "defaultPrompt": "Use $sleep-investigation to help me understand my sleep.",
+    "brandColor": "#FF5A50"
+  },
+  "mcpServers": "./.mcp.json"
+}

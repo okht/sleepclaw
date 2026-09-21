@@ -11,6 +11,8 @@
 
 ## Persistence
 
+The shared tool interface now also serves a standalone JSON CLI and local Codex/Claude Code MCP plugin. Those hosts own their own conversation execution; they do not launch Pi. See [shared sleep tools and plugins](./sleep-tools-plugin.md) for uncertainty, investigation planning, health evidence analysis, reuse decisions and setup.
+
 New home defaults to the OS user's `.sleepclaw-pi` directory, overridable by SLEEPCLAW_HOME. Never migrate or rename old Home automatically. SQLite owns domain truth, Pi JSONL owns model conversation. Current facts are supplied on each run; old facts are explicitly superseded. Investigation IDs link domain state and session directories.
 
 Health records are persisted locally without mandatory encryption; original Apple Health archives are not uploaded. When AI analysis is used, conversation text, selected facts and bounded tool results are sent to the user's configured model provider. Electron safeStorage protects saved keys; the worker receives keys in memory. CLI supports environment credentials without writing plaintext keys. Settings contain no key. Reports export structured JSON and Markdown. Original imported source files are never modified.

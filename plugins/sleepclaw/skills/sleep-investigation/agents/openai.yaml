@@ -1,0 +1,4 @@
+interface:
+  display_name: "Sleep Investigation"
+  short_description: "Clarify sleep questions with local health evidence"
+  default_prompt: "Use $sleep-investigation to help me understand my sleep using my recollections and selected health records."

@@ -3,13 +3,34 @@ import type { Analysis, Fact, Feedback, HealthRecord, Investigation, Metric, Rep
 function numberFact(facts: Fact[], topic: string): number | undefined {
   const fact = facts.find(f => f.scope === 'sleep' && f.topic === topic && f.status === 'known');
   // Free prose is never parsed into a measurement. Only explicit numeric answers count.
-  if (typeof fact?.value !== 'number' || !Number.isFinite(fact.value) || fact.value < 0) return undefined;
+  if (fact?.uncertainty || typeof fact?.value !== 'number' || !Number.isFinite(fact.value) || fact.value < 0) return undefined;
   return fact.value;
+}
+
+function recalledDurationRange(facts: Fact[], zh: boolean): string | undefined {
+  const fact = facts.find(f => f.scope === 'sleep' && f.topic === 'sleep_duration_hours' && f.status === 'known');
+  const range = fact?.uncertainty;
+  if (range?.kind !== 'range' || range.unit !== 'hours'
+    || typeof range.lower !== 'number' || !Number.isFinite(range.lower) || range.lower < 0
+    || typeof range.upper !== 'number' || !Number.isFinite(range.upper) || range.upper < range.lower) return undefined;
+  return zh
+    ? `自述估计睡眠时长为 ${range.lower}～${range.upper} 小时；保留为范围，不换算成精确时长。`
+    : `Estimated sleep duration: ${range.lower}–${range.upper} hours (self-reported range). No exact duration is calculated from this range.`;
+}
+
+function englishMetricNote(note: string): string {
+  const translations: Record<string, string> = {
+    '设备标记为睡眠的区间并集；卧床和重复阶段不会重复相加。': 'Union of intervals marked as asleep by the device; in-bed time and duplicate stages are not counted twice.',
+    '仅统计设备记录到的清醒，缺少记录不等于零清醒。': 'Counts only recorded awake time; missing records do not establish zero awake time.',
+    '需要可靠卧床范围和完整睡眠／清醒覆盖；资料不足时不计算。': 'Requires a reliable in-bed interval and complete asleep/awake coverage; unavailable when evidence is insufficient.',
+    '已记录样本的算术平均；无法代表缺失时段，不用于诊断。': 'Arithmetic mean of recorded samples; does not represent missing periods and is not diagnostic.',
+  };
+  return translations[note] ?? note;
 }
 
 export function reportContent(investigation: Investigation, facts: Fact[], analysis: Analysis, feedback: Feedback[], aiInterpretation?: string, aiAction?: string, previousReports: Report[] = []): Omit<Report, 'id' | 'revision' | 'createdAt' | 'markdown'> {
   const zh = investigation.language === 'zh';
-  const metrics: Metric[] = analysis.metrics.map(m => ({ ...m }));
+  const metrics: Metric[] = analysis.metrics.map(m => ({ ...m, ...(m.note !== undefined && !zh ? { note: englishMetricNote(m.note) } : {}) }));
   for (const [stage, value] of Object.entries(analysis.stages)) metrics.push({ key: `stage_${stage}_minutes`, value, unit: 'min', source: 'derived' });
   const recalledHours = numberFact(facts, 'sleep_duration_hours');
   if (recalledHours !== undefined) metrics.push({ key: 'selfReportedSleepMinutes', value: Math.round(recalledHours * 60), unit: 'min', source: 'self-report' });
@@ -17,11 +38,12 @@ export function reportContent(investigation: Investigation, facts: Fact[], analy
   if (awakenings !== undefined && Number.isInteger(awakenings)) metrics.push({ key: 'rememberedAwakenings', value: awakenings, unit: 'count', source: 'self-report' });
   const deviceDuration = metrics.find(m => m.key === 'totalSleepMinutes' && m.value !== null);
   const duration = deviceDuration ?? metrics.find(m => m.key === 'selfReportedSleepMinutes' && m.value !== null);
+  const recalledRange = recalledDurationRange(facts, zh);
   const awake = metrics.find(m => m.key === 'awakeMinutes' && m.value !== null);
   const recovery = facts.find(f => f.scope === 'sleep' && f.topic === 'recovery' && f.status === 'known');
   const unavailable = zh ? '资料不足，暂不评价。' : 'There is not enough information to assess this dimension.';
   const dimensions = [
-    { key: 'duration', text: duration ? (zh ? `记录的睡眠时长为 ${duration.value} 分钟，来源：${deviceDuration ? '设备估计' : '本人自述'}。` : `Recorded sleep duration: ${duration.value} minutes (${deviceDuration ? 'device estimate' : 'self-report'}).`) : unavailable, score: null },
+    { key: 'duration', text: [duration ? (zh ? `记录的睡眠时长为 ${duration.value} 分钟，来源：${deviceDuration ? '设备估计' : '本人自述'}。` : `Recorded sleep duration: ${duration.value} minutes (${deviceDuration ? 'device estimate' : 'self-report'}).`) : undefined, recalledRange].filter(Boolean).join(' ') || unavailable, score: null },
     { key: 'continuity', text: awake ? (zh ? `所选范围内设备记录清醒 ${awake.value} 分钟；缺记录的间隔不算清醒。` : `The device recorded ${awake.value} awake minutes in the selected interval. Missing intervals are not counted as wake.`) : unavailable, score: null },
     { key: 'structure', text: Object.keys(analysis.stages).length ? (zh ? '有设备估计分期，可查看阶段时长；这些记录不用于医学诊断。' : 'Device-estimated stages are available. These records do not establish a medical diagnosis.') : unavailable, score: null },
     { key: 'regularity', text: zh ? '本阶段未计算长期规律性，暂不评价。' : 'Long-term regularity has not been calculated in this phase.', score: null },
@@ -50,7 +72,7 @@ export function reportContent(investigation: Investigation, facts: Fact[], analy
   const scope = investigation.scope === 'nap' ? (zh ? '小睡' : 'nap') : investigation.scope === 'segment' ? (zh ? '睡眠片段' : 'sleep segment') : (zh ? '本次睡眠' : 'sleep');
   const summary = duration
     ? (zh ? `${scope}有 ${duration.value} 分钟的时长记录。先结合你的恢复感和记录覆盖情况理解，暂不根据单一数字判断睡得好坏。` : `This ${scope} has ${duration.value} recorded sleep minutes. Consider your recovery and data coverage before judging overall sleep quality.`)
-    : (zh ? '目前已整理你的目标和已提供的信息；资料尚不足以计算睡眠时长或评分。你仍可继续补充或查看这份阶段性记录。' : 'Your goal and available information have been recorded. There is not enough information to calculate sleep duration or a score yet. You may add details or keep this preliminary report.');
+    : recalledRange ?? (zh ? '目前已整理你的目标和已提供的信息；资料尚不足以计算睡眠时长或评分。你仍可继续补充或查看这份阶段性记录。' : 'Your goal and available information have been recorded. There is not enough information to calculate sleep duration or a score yet. You may add details or keep this preliminary report.');
   return { investigationId: investigation.id, factRevision: investigation.revision, language: investigation.language, title: zh ? `SleepClaw · ${scope}分析` : `SleepClaw · ${scope} analysis`, summary, basis: { start: investigation.start, end: investigation.end, source: investigation.source, scope: investigation.scope }, metrics, dimensions, score: null, scoreVersion: 'unscored-v1', limitations: [...new Set(limitations)], action, aiInterpretation: aiInterpretation?.trim() || undefined, status: 'complete' };
 }
 

@@ -1,0 +1,9 @@
+{
+  "name": "sleepclaw",
+  "version": "0.2.0",
+  "description": "Local sleep investigation and bounded Apple Health analysis with the host assistant.",
+  "author": { "name": "SleepClaw contributors" },
+  "homepage": "https://github.com/okht/sleepclaw",
+  "repository": "https://github.com/okht/sleepclaw",
+  "license": "MIT"
+}

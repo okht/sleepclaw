@@ -1,9 +1,15 @@
 export type Language = 'zh' | 'en';
 export type SleepScope = 'main' | 'nap' | 'segment';
 export type FactValue = string | number | boolean | null;
-export interface Fact { id: string; topic: string; value: FactValue; status: 'known' | 'unknown'; scope: 'profile' | 'sleep'; investigationId?: string; revision: number; updatedAt: string }
+export interface FactUncertainty { kind: 'approximate' | 'range' | 'uncertain'; original: string; lower?: number; upper?: number; unit?: string }
+export interface Fact { id: string; topic: string; value: FactValue; status: 'known' | 'unknown'; scope: 'profile' | 'sleep'; uncertainty?: FactUncertainty; investigationId?: string; revision: number; updatedAt: string }
+export interface FactInput { topic: string; value: FactValue; status?: Fact['status']; scope: Fact['scope']; uncertainty?: FactUncertainty }
 export interface Question { id: string; topic: string; text: string; reason?: string; scope: 'profile' | 'sleep' }
-export interface Investigation { id: string; goal: string; language: Language; scope: SleepScope; createdAt: string; revision: number; start?: string; end?: string; source?: string; pendingQuestion?: Question; status: 'collecting' | 'ready' | 'reported' }
+export interface InvestigationPlanStep { id: string; kind: 'clarify' | 'query' | 'report'; description: string; status: 'pending' | 'done' | 'blocked'; reason?: string }
+/** revision is the fact/target revision this plan was prepared against. */
+export interface InvestigationPlanInput { objective: string; steps: InvestigationPlanStep[]; revision: number }
+export interface InvestigationPlan extends InvestigationPlanInput { updatedAt: string }
+export interface Investigation { id: string; goal: string; language: Language; scope: SleepScope; createdAt: string; revision: number; start?: string; end?: string; source?: string; pendingQuestion?: Question; plan?: InvestigationPlan; status: 'collecting' | 'ready' | 'reported' }
 export interface HealthRecord { id: string; type: 'sleep' | 'heartRate' | 'hrv' | 'respiratoryRate' | 'oxygenSaturation'; value: string | number; unit?: string; source: string; start: string; end: string; startOffset: string; endOffset: string }
 export interface ImportSummary { id: string; name: string; importedAt: string; recordCount: number; duplicateCount: number; sources: string[]; start?: string; end?: string; warnings: string[] }
 export interface SleepCandidate { id: string; start: string; end: string; source: string; asleepMinutes: number }

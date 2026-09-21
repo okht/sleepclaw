@@ -23,6 +23,7 @@ pi-app/dist/
 pi-app/coverage/
 pi-app/.smoke/
 pi-app/output/
+plugins/sleepclaw/runtime/
 .playwright-cli/
 
 # Local application state, credentials, and private health imports
