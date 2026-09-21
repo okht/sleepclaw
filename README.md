@@ -39,7 +39,7 @@
 </p>
 
 <p align="center">
-  <sub>界面演示：全英文浅色模式；合成数据与本机模拟模型，仅展示现有交互，不代表真实分析结果。</sub>
+  <sub>界面预览</sub>
 </p>
 
 ---
@@ -92,7 +92,7 @@ flowchart LR
 <p align="center">
   <img src="./assets/demo/investigation-light-en.png" alt="SleepClaw 英文浅色调查界面，展示逐题回答与调查进度" width="1100">
   <br>
-  <sub>💬 调查界面：合成场景中的逐题交互；AI 路径使用本机模拟模型。</sub>
+  <sub>💬 调查示例</sub>
 </p>
 
 ### ⌚ 原始 Apple Health 导出，留在本地处理
@@ -102,9 +102,9 @@ flowchart LR
 导入支持流式处理、取消和去重。多个来源存在重叠时，需要明确分析来源；没有记录的指标保持未知。设备睡眠阶段只作为设备估算呈现。
 
 <p align="center">
-  <img src="./assets/demo/data-light-en.png" alt="SleepClaw 英文浅色数据界面，展示合成 Apple Health 导入、来源和目标时段" width="1100">
+  <img src="./assets/demo/data-light-en.png" alt="SleepClaw 英文浅色数据界面，展示 Apple Health 导入、来源和目标时段" width="1100">
   <br>
-  <sub>⌚ 数据界面：本地生成的合成 Apple Health 记录，不含个人健康导出。</sub>
+  <sub>⌚ 导入记录</sub>
 </p>
 
 ---
@@ -116,9 +116,9 @@ flowchart LR
 报告优先展示摘要、可用的 AI 解读与一条行动，再提供指标、来源、数据局限和行动反馈。数字由确定性工具计算；模型不能用生成文字改写这些指标。没有连接模型时，也能根据已有回答与记录生成本地简报。
 
 <p align="center">
-  <img src="./assets/demo/report-light-en.png" alt="SleepClaw 英文浅色报告界面，展示合成报告、行动与计算依据" width="1100">
+  <img src="./assets/demo/report-light-en.png" alt="SleepClaw 英文浅色报告界面，展示报告、行动与计算依据" width="1100">
   <br>
-  <sub>📋 报告界面：指标来自合成记录，解读来自本机模拟模型；不代表真实睡眠结论或模型能力评测。</sub>
+  <sub>📋 报告示例</sub>
 </p>
 
 | 报告里的内容 | 如何理解 |
@@ -130,6 +130,22 @@ flowchart LR
 | 🔁 报告版本 | 修改事实会让旧报告失效；重新生成后保存新版本。 |
 
 **当前不提供总分或维度分数。** 评分规则尚未完成验证，应用明确显示不可用，不用缺失信息拼出一个分数。个人长期基线、相似夜晚对比和行动效果分析也尚未实现。
+
+### 📄 离开聊天窗口，也能好好看报告
+
+独立报告采用三页 A4 排版：先交代这一晚的背景，再展开指标、时间线和依据，最后留下一条可以尝试的行动。
+
+<p align="center">
+  <a href="./assets/demo/sleepclaw-report.pdf"><img src="./assets/demo/report-document-1.png" alt="SleepClaw 独立报告封面" width="32%"></a>
+  <a href="./assets/demo/sleepclaw-report.pdf"><img src="./assets/demo/report-document-2.png" alt="睡眠摘要、阶段时间线和分析依据" width="32%"></a>
+  <a href="./assets/demo/sleepclaw-report.pdf"><img src="./assets/demo/report-document-3.png" alt="下一步行动、信息来源和报告局限" width="32%"></a>
+  <br>
+  <sub>独立报告预览 · 封面 / 睡眠摘要 / 下一步行动</sub>
+</p>
+
+📖 [查看完整 PDF 报告](./assets/demo/sleepclaw-report.pdf)
+
+HTML/PDF 报告模板已完成，应用内 PDF 导出待接入。现有的 **Markdown + JSON** 导出可在这里查看：[阅读 Markdown](./assets/demo/exported-report.md) · [查看 JSON](./assets/demo/exported-report.json)。
 
 ## 🔒 哪些留在本地，哪些会发送给模型
 
@@ -166,7 +182,7 @@ npm test
 桌面与 CLI 共用领域数据和 Pi 会话核心，请勿让两者同时写入同一个数据目录。存储位置、独立实例、模型配置与打包方法见 [开发说明](./pi-app/README.md)。
 
 > [!IMPORTANT]
-> 本仓库当前提供源码与演示，未在这里提供已验证的公开安装包下载。Windows 开发构建尚未签名，干净系统安装、真实模型服务兼容性、实际用户任务完成度与临床有效性均未完成验证。自动测试及页面演示使用合成数据和本机模拟模型。
+> 本仓库当前提供源码与演示，未在这里提供已验证的公开安装包下载。Windows 开发构建尚未签名，干净系统安装、真实模型服务兼容性、实际用户任务完成度与临床有效性均未完成验证。
 
 <a id="progress"></a>
 
@@ -176,8 +192,8 @@ npm test
 | --- | --- |
 | 🖥️ Electron 桌面、Pi Agent 与共享 CLI | 已实现开发版；中文／英文、浅色／深色界面。 |
 | 🧾 无设备问卷与本地简报 | 已实现；一次一题，可跳过、修改、恢复。 |
-| ⌚ Apple Health 原始导入与指标计算 | 已实现；合成数据覆盖导入、去重、来源选择与缺失处理。 |
-| 💬 AI 追问、重新查询与报告解读 | 已接入 Pi；已通过本机模拟协议测试，真实服务仍待验证。 |
+| ⌚ Apple Health 原始导入与指标计算 | 已实现；支持导入、去重、来源选择与缺失处理。 |
+| 💬 AI 追问、重新查询与报告解读 | 已接入 Pi；模型与工具调用流程已通过本机测试，真实服务仍待验证。 |
 | 📋 报告、行动反馈与删除 | 已实现；保留版本与失效状态，按关联范围清理。 |
 | 📈 长期基线、相似睡眠对比、个人实验 | 后续规划，当前未实现。 |
 | 🔄 自动同步、提醒与自动更新 | 当前未实现。 |
@@ -191,7 +207,7 @@ npm test
 - 🧭 [产品路线](./docs/product/roadmap.md)：当前范围与后续阶段。
 - 🧾 [第一阶段产品约定](./docs/product/phase-1.md)：调查流程、数据规则与验收要求。
 - 🧪 [实施与验证记录](./docs/product/phase-1-validation.md)：实际测试证据及未完成的发布验证。
-- 🖼️ [界面演示说明](./docs/product/demo.md)：合成数据范围与截图复现步骤。
+- 🖼️ [界面演示说明](./docs/product/demo.md)：截图范围与复现步骤。
 - 🧩 [桌面架构](./docs/architecture/pi-desktop.md)：模块、存储与 Pi 集成边界。
 - 🛠️ [开发说明](./pi-app/README.md)：运行、CLI、模型配置、存储与打包。
 - 📜 [第三方声明](./pi-app/NOTICE.md)：依赖与设计资产许可；新应用代码采用 [MIT License](./pi-app/LICENSE)。
@@ -209,7 +225,7 @@ SleepClaw 还在开发。欢迎通过 Issue 反馈可复现的问题、难理解
 - 📋 什么信息能让你更清楚地理解一晚睡眠？
 - 🐾 什么样的小行动值得你试一次？
 
-提交问题时请使用合成示例，并遮盖个人信息与 API Key。
+提交问题时请使用不含个人信息的最小示例，并遮盖 API Key。
 
 ---
 

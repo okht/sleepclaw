@@ -20,7 +20,7 @@ Forge 使用 TypeScript＋Webpack。`make` 先生成独立 Node 运行时与生�
 - `out/SleepClaw-win32-x64/sleepclaw.exe`：可直接运行的应用。
 - `out/make/squirrel.windows/x64/SleepClaw-Setup.exe`：安装器，生成成功后才可分发。
 
-`smoke` 对打包后的可执行文件进行本机合成测试，使用 `.smoke/packaged-*` 的独立数据目录，验证 SQLite、Pi 加载、模型连接、工具调用及报告保存，不访问真实模型服务。它不等同于干净 Windows 安装测试。当前包未签名，不能承诺没有 SmartScreen 或杀毒软件提示。
+`smoke` 对打包后的可执行文件进行本机协议测试，使用 `.smoke/packaged-*` 的独立数据目录，检查 SQLite、Pi 加载、模型连接、工具调用及报告保存。干净 Windows 安装测试需单独执行。当前包未签名，不能承诺没有 SmartScreen 或杀毒软件提示。
 
 ## 使用流程
 

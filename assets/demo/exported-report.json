@@ -1,0 +1,205 @@
+{
+  "id": "47009591-918c-4c55-9ab3-92ae35cceea0",
+  "revision": 1,
+  "createdAt": "2026-09-20T23:16:21.774Z",
+  "investigationId": "f3c300cb-fe06-44ff-bd9b-538b5c6102f2",
+  "factRevision": 7,
+  "language": "en",
+  "title": "SleepClaw · sleep analysis",
+  "summary": "This sleep has 420 recorded sleep minutes. Consider your recovery and data coverage before judging overall sleep quality.",
+  "basis": {
+    "start": "2026-09-20T15:15:00.000Z",
+    "end": "2026-09-20T22:45:00.000Z",
+    "source": "Apple Watch (demo)",
+    "scope": "main"
+  },
+  "metrics": [
+    {
+      "key": "totalSleepMinutes",
+      "value": 420,
+      "unit": "min",
+      "source": "derived",
+      "note": "设备标记为睡眠的区间并集；卧床和重复阶段不会重复相加。"
+    },
+    {
+      "key": "awakeMinutes",
+      "value": 30,
+      "unit": "min",
+      "source": "derived",
+      "note": "仅统计设备记录到的清醒，缺少记录不等于零清醒。"
+    },
+    {
+      "key": "inBedMinutes",
+      "value": 450,
+      "unit": "min",
+      "source": "derived"
+    },
+    {
+      "key": "sleepEfficiencyPercent",
+      "value": 93.33,
+      "unit": "%",
+      "source": "derived",
+      "note": "需要可靠卧床范围和完整睡眠／清醒覆盖；资料不足时不计算。"
+    },
+    {
+      "key": "heartRateMean",
+      "value": null,
+      "unit": "bpm",
+      "source": "derived",
+      "note": "已记录样本的算术平均；无法代表缺失时段，不用于诊断。"
+    },
+    {
+      "key": "hrvMean",
+      "value": null,
+      "unit": "ms",
+      "source": "derived",
+      "note": "已记录样本的算术平均；无法代表缺失时段，不用于诊断。"
+    },
+    {
+      "key": "respiratoryRateMean",
+      "value": null,
+      "unit": "count/min",
+      "source": "derived",
+      "note": "已记录样本的算术平均；无法代表缺失时段，不用于诊断。"
+    },
+    {
+      "key": "oxygenSaturationMean",
+      "value": null,
+      "unit": "%",
+      "source": "derived",
+      "note": "已记录样本的算术平均；无法代表缺失时段，不用于诊断。"
+    },
+    {
+      "key": "stage_core_minutes",
+      "value": 245,
+      "unit": "min",
+      "source": "derived"
+    },
+    {
+      "key": "stage_deep_minutes",
+      "value": 75,
+      "unit": "min",
+      "source": "derived"
+    },
+    {
+      "key": "stage_rem_minutes",
+      "value": 100,
+      "unit": "min",
+      "source": "derived"
+    },
+    {
+      "key": "selfReportedSleepMinutes",
+      "value": 420,
+      "unit": "min",
+      "source": "self-report"
+    },
+    {
+      "key": "rememberedAwakenings",
+      "value": 1,
+      "unit": "count",
+      "source": "self-report"
+    }
+  ],
+  "dimensions": [
+    {
+      "key": "duration",
+      "text": "Recorded sleep duration: 420 minutes (device estimate).",
+      "score": null
+    },
+    {
+      "key": "continuity",
+      "text": "The device recorded 30 awake minutes in the selected interval. Missing intervals are not counted as wake.",
+      "score": null
+    },
+    {
+      "key": "structure",
+      "text": "Device-estimated stages are available. These records do not establish a medical diagnosis.",
+      "score": null
+    },
+    {
+      "key": "regularity",
+      "text": "Long-term regularity has not been calculated in this phase.",
+      "score": null
+    },
+    {
+      "key": "recovery",
+      "text": "Your reported recovery: I woke feeling tired and unrefreshed.",
+      "score": null
+    }
+  ],
+  "score": null,
+  "scoreVersion": "unscored-v1",
+  "limitations": [
+    "No personal historical baseline was calculated. Device stages are estimates.",
+    "Scoring rules have not yet been validated. No 0–100 score or dimension score is provided.",
+    "This report explains sleep records and is not a diagnosis or treatment recommendation.",
+    "Some answers were skipped or unknown, which limits related interpretations.",
+    "AI-generated interpretations and suggestions may be wrong. Consider the original records and your own experience."
+  ],
+  "action": "Tonight, try closing the street-facing bedroom window before bed, if the room stays comfortable and ventilated, as a simple quieter-bedroom experiment.",
+  "aiInterpretation": "Your watch estimated 7 hours asleep and 30 minutes awake. You said you woke feeling tired and remember traffic waking you around 2 am. That timing overlaps a recorded 20-minute awake period. It is a useful detail to explore, but one night cannot tell us what caused the tiredness. Sleep stages are device estimates, not a diagnosis.",
+  "status": "complete",
+  "timeline": [
+    {
+      "start": "2026-09-20T15:15:00.000Z",
+      "end": "2026-09-20T16:25:00.000Z",
+      "stage": "core"
+    },
+    {
+      "start": "2026-09-20T16:25:00.000Z",
+      "end": "2026-09-20T17:10:00.000Z",
+      "stage": "deep"
+    },
+    {
+      "start": "2026-09-20T17:10:00.000Z",
+      "end": "2026-09-20T17:30:00.000Z",
+      "stage": "core"
+    },
+    {
+      "start": "2026-09-20T17:30:00.000Z",
+      "end": "2026-09-20T18:00:00.000Z",
+      "stage": "rem"
+    },
+    {
+      "start": "2026-09-20T18:00:00.000Z",
+      "end": "2026-09-20T18:20:00.000Z",
+      "stage": "awake"
+    },
+    {
+      "start": "2026-09-20T18:20:00.000Z",
+      "end": "2026-09-20T19:30:00.000Z",
+      "stage": "core"
+    },
+    {
+      "start": "2026-09-20T19:30:00.000Z",
+      "end": "2026-09-20T20:00:00.000Z",
+      "stage": "deep"
+    },
+    {
+      "start": "2026-09-20T20:00:00.000Z",
+      "end": "2026-09-20T20:10:00.000Z",
+      "stage": "awake"
+    },
+    {
+      "start": "2026-09-20T20:10:00.000Z",
+      "end": "2026-09-20T20:50:00.000Z",
+      "stage": "rem"
+    },
+    {
+      "start": "2026-09-20T20:50:00.000Z",
+      "end": "2026-09-20T21:50:00.000Z",
+      "stage": "core"
+    },
+    {
+      "start": "2026-09-20T21:50:00.000Z",
+      "end": "2026-09-20T22:20:00.000Z",
+      "stage": "rem"
+    },
+    {
+      "start": "2026-09-20T22:20:00.000Z",
+      "end": "2026-09-20T22:45:00.000Z",
+      "stage": "core"
+    }
+  ],
+  "markdown": "# SleepClaw · sleep analysis\n\nReport revision: 1 · 2026-09-20T23:16:21.774Z\n\nThis sleep has 420 recorded sleep minutes. Consider your recovery and data coverage before judging overall sleep quality.\n\n## Analysis basis\n\nRecord source: Apple Watch (demo)\nScope: Main sleep\nStart: 2026-09-20T15:15:00.000Z\nEnd: 2026-09-20T22:45:00.000Z\n\n## Score\n\nNot scored. Scoring rules have not yet been validated.\n\n## Five dimensions\n\n- **duration**：Recorded sleep duration: 420 minutes (device estimate).\n- **continuity**：The device recorded 30 awake minutes in the selected interval. Missing intervals are not counted as wake.\n- **structure**：Device-estimated stages are available. These records do not establish a medical diagnosis.\n- **regularity**：Long-term regularity has not been calculated in this phase.\n- **recovery**：Your reported recovery: I woke feeling tired and unrefreshed.\n\n## Calculated and recorded results\n\n| Metric | Value | Unit | Source |\n| --- | --- | --- | --- |\n| Device-estimated sleep duration | 420 | min | Calculated from records |\n| Recorded awake time | 30 | min | Calculated from records |\n| Recorded time in bed | 450 | min | Calculated from records |\n| Sleep efficiency | 93.33 | % | Calculated from records |\n| Mean recorded heart rate | Unavailable | bpm | Calculated from records |\n| Mean recorded HRV | Unavailable | ms | Calculated from records |\n| Mean recorded breathing rate | Unavailable | count/min | Calculated from records |\n| Mean recorded oxygen saturation | Unavailable | % | Calculated from records |\n| Device-estimated Core sleep | 245 | min | Calculated from records |\n| Device-estimated Deep sleep | 75 | min | Calculated from records |\n| Device-estimated REM sleep | 100 | min | Calculated from records |\n| Recalled sleep duration | 420 | min | Self-report |\n| Remembered awakenings | 1 | count | Self-report |\n\n## Recorded timeline\n\nTimes include a timezone. Gaps mean missing records and do not establish wakefulness.\n\n| Start | End | Stage |\n| --- | --- | --- |\n| 2026-09-20T15:15:00.000Z | 2026-09-20T16:25:00.000Z | Core (device estimate) |\n| 2026-09-20T16:25:00.000Z | 2026-09-20T17:10:00.000Z | Deep (device estimate) |\n| 2026-09-20T17:10:00.000Z | 2026-09-20T17:30:00.000Z | Core (device estimate) |\n| 2026-09-20T17:30:00.000Z | 2026-09-20T18:00:00.000Z | REM (device estimate) |\n| 2026-09-20T18:00:00.000Z | 2026-09-20T18:20:00.000Z | Recorded awake |\n| 2026-09-20T18:20:00.000Z | 2026-09-20T19:30:00.000Z | Core (device estimate) |\n| 2026-09-20T19:30:00.000Z | 2026-09-20T20:00:00.000Z | Deep (device estimate) |\n| 2026-09-20T20:00:00.000Z | 2026-09-20T20:10:00.000Z | Recorded awake |\n| 2026-09-20T20:10:00.000Z | 2026-09-20T20:50:00.000Z | REM (device estimate) |\n| 2026-09-20T20:50:00.000Z | 2026-09-20T21:50:00.000Z | Core (device estimate) |\n| 2026-09-20T21:50:00.000Z | 2026-09-20T22:20:00.000Z | REM (device estimate) |\n| 2026-09-20T22:20:00.000Z | 2026-09-20T22:45:00.000Z | Core (device estimate) |\n\n## AI interpretation\n\nThe following interpretation is AI-generated and may be wrong. Consider the records and your own experience.\n\nYour watch estimated 7 hours asleep and 30 minutes awake. You said you woke feeling tired and remember traffic waking you around 2 am. That timing overlaps a recorded 20-minute awake period. It is a useful detail to explore, but one night cannot tell us what caused the tiredness. Sleep stages are device estimates, not a diagnosis.\n\n## One next action\n\nTonight, try closing the street-facing bedroom window before bed, if the room stays comfortable and ventilated, as a simple quieter-bedroom experiment.\n\n## Limitations\n\n- No personal historical baseline was calculated. Device stages are estimates.\n- Scoring rules have not yet been validated. No 0–100 score or dimension score is provided.\n- This report explains sleep records and is not a diagnosis or treatment recommendation.\n- Some answers were skipped or unknown, which limits related interpretations.\n- AI-generated interpretations and suggestions may be wrong. Consider the original records and your own experience.\n"
+}

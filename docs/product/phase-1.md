@@ -25,14 +25,14 @@ Approved 2026-09-21. Implementation: `pi-app/`. Status and reproducible commands
 
 - Structured report is canonical, fixed UI and Markdown are projections. AI text does not overwrite tool-computed metric values.
 - Each report records language, data/fact revision, limitations, source and action. Partial AI output is never presented as a completed report.
-- API keys never enter prompts, transcripts, errors or reports. Connection testing uses synthetic content.
+- API keys never enter prompts, transcripts, errors or reports. Connection testing uses fixed test content.
 - Local health records are unencrypted by product choice. Pi sessions can contain health statements; explain this and delete linked sessions when deleting investigations/data.
 - Model analysis sends relevant facts and bounded computed results to the configured provider. Show this before first use. No telemetry.
 - Deleting an investigation removes its answers/reports/chat; shared imports and profile remain unless explicitly deleted. Import deletion invalidates dependent analysis and clears related model sessions.
 
 ## Acceptance
 
-Synthetic tests cover no-device flow, original ZIP/XML, duplicates, overlapping sources, midnight/time offsets, naps, missing values, unknown/skip/correction, re-read after answers, cancellation/rollback, resume, stale revisions and deletion. Both languages complete the same journey. Skills-disabled core must work. Packaging is Windows x64 only, tested separately from development startup; signing status and untested real providers are disclosed.
+Automated tests cover no-device flow, original ZIP/XML, duplicates, overlapping sources, midnight/time offsets, naps, missing values, unknown/skip/correction, re-read after answers, cancellation/rollback, resume, stale revisions and deletion. Both languages complete the same journey. Skills-disabled core must work. Packaging is Windows x64 only, tested separately from development startup; signing status and untested real providers are disclosed.
 
 ## Delivery sequence
 

@@ -1,0 +1,2 @@
+# Preserve published report bytes and avoid text diffs for compressed PDF streams.
+*.pdf binary
