@@ -80,10 +80,11 @@ export function createSleepTools(store: SleepStore, options: { investigationId?:
     tool('sleep_report', 'Create report', 'Generate a versioned report now; incomplete facts are allowed. Computed metrics are authoritative. Separate observations, user statements and tentative explanations, state uncertainty and provide one feasible action. Leave interpretation/action empty for a local facts-only report.', {
       interpretation: Type.String({ maxLength: 16000 }), action: Type.String({ maxLength: 2000 }),
     }, false, (params, id) => store.buildReport(id, params.interpretation || undefined, params.action || undefined)),
-    tool('sleep_feedback', 'Remember action feedback', 'Save the user expressed response to an action in this investigation.', {
+    tool('sleep_feedback', 'Remember action feedback', 'Save the user expressed response to an action in the currently selected sleep. Select the matching investigation and episode before responding to a historical report.', {
       reportId: text(100), choice: Type.Union(['accepted', 'cannot', 'unhelpful', 'later'].map(value => Type.Literal(value))), note: Type.Optional(text()),
     }, false, (params, id) => {
-      if (!store.snapshot(id).reports.some(report => report.id === params.reportId && report.investigationId === id)) throw new Error('REPORT_NOT_FOUND');
+      const snapshot = store.snapshot(id);
+      if (!reportsForEpisode(snapshot.reports, snapshot.active).some(report => report.id === params.reportId)) throw new Error('REPORT_NOT_FOUND');
       return store.recordFeedback(params.reportId, params.choice, params.note);
     }),
     tool('sleep_plan', 'Plan the investigation', 'Persist a short user-visible investigation plan (maximum six steps), with the current context revision. Describe checks and questions, not hidden reasoning. Refresh after facts or target change; PLAN_STALE means read context first. A report request may end investigation immediately.', {

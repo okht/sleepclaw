@@ -22,7 +22,16 @@ export function conversationFacts(facts: Fact[], investigationId?: string): Fact
 
 export function orderedReports(reports: Report[], investigationId?: string): Report[] {
   return [...reports].sort((a, b) => Number(b.investigationId === investigationId) - Number(a.investigationId === investigationId)
-    || b.createdAt.localeCompare(a.createdAt));
+    || b.createdAt.localeCompare(a.createdAt) || b.revision - a.revision);
+}
+
+export function formatReportTime(value: string | undefined, language: Language): string {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(language === 'zh' ? 'zh-CN' : 'en-GB', {
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', timeZoneName: 'shortOffset',
+  }).format(date);
 }
 
 export function formatDate(value: string | undefined, language: Language): string {
@@ -38,7 +47,7 @@ export function displayNumber(value: number | null): string {
   return value === null || !Number.isFinite(value) ? '—' : new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value);
 }
 
-const publicErrors = ['AUTH_FAILED', 'QUOTA', 'MODEL_NOT_FOUND', 'CANCELLED', 'TIMEOUT', 'CONFIG_REQUIRED', 'CONFIG_INVALID', 'BASE_URL_INVALID', 'TOOL_TEST_FAILED', 'MODEL_REQUIRED', 'BUSY', 'TARGET_REQUIRED', 'SOURCE_REQUIRED', 'CREDENTIAL_STORAGE_UNAVAILABLE', 'WORKER_EXITED', 'NOT_READY'] as const;
+const publicErrors = ['AUTH_FAILED', 'QUOTA', 'MODEL_NOT_FOUND', 'CANCELLED', 'TIMEOUT', 'CONFIG_REQUIRED', 'CONFIG_INVALID', 'BASE_URL_INVALID', 'TOOL_TEST_FAILED', 'MODEL_REQUIRED', 'BUSY', 'TARGET_REQUIRED', 'SOURCE_REQUIRED', 'REPORT_NOT_FOUND', 'CREDENTIAL_STORAGE_UNAVAILABLE', 'WORKER_EXITED', 'NOT_READY'] as const;
 export function errorKey(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error);
   return `error_${publicErrors.find((code) => new RegExp(`\\b${code}\\b`).test(text)) || 'REQUEST_FAILED'}`;

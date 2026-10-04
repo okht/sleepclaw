@@ -329,6 +329,12 @@ h3 { font-size: 16px; font-weight: 600; }
 .report-header h2 { font-size: 21px; }
 .report-meta { color: var(--subtle); font-size: 11px; margin-top: 6px; overflow-wrap: anywhere; }
 .report-header .badge { flex-shrink: 0; }
+.report-owner { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; overflow-wrap: anywhere; }
+.report-owner span, .report-sleep-window > span { color: var(--muted); font-size: 11px; }
+.report-owner strong { font-size: 16px; font-weight: 550; }
+.report-sleep-window { margin-top: 12px; font-size: 12px; overflow-wrap: anywhere; }
+.report-sleep-window > span { display: block; margin-bottom: 4px; }
+.report-history-hint { margin-bottom: 16px; }
 .report-basis summary { cursor: pointer; font-weight: 600; }
 .report-basis summary > span { float: right; font-weight: 400; }
 .report-basis dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 20px; margin: 18px 0 0; }

@@ -272,10 +272,10 @@ test('existing reports show their title once and only offer a picker for multipl
   const report: Report = {
     id: 'report-compact', investigationId: 'sleep-compact', revision: 1, factRevision: 1, language: 'zh', createdAt: '2026-09-21T12:00:00Z',
     title: 'A single report title', summary: 'The useful summary', metrics: [], dimensions: [], score: null, scoreVersion: 'unscored-v1',
-    limitations: [], action: 'The one action', status: 'complete', markdown: '',
+    limitations: [], action: 'The one action', status: 'complete', markdown: '', basis: { scope: 'main' },
   };
   const render = (reports: Report[]) => renderToStaticMarkup(createElement(I18nextProvider, { i18n }, createElement(ReportsPanel, {
-    state: { ...state, reports }, action, blocked: false, makeReport: async () => {},
+    state: { ...state, reports, active: { id: report.investigationId, goal: 'Synthetic owner', language: 'zh', scope: 'main', createdAt: '2026-09-21', revision: 1, status: 'reported' } }, action, blocked: false, makeReport: async () => {},
   })));
   const single = render([report]);
   assert.equal((single.match(/A single report title/g) || []).length, 1);

@@ -3,6 +3,7 @@ import { join, resolve, sep } from 'node:path';
 import { defineTool, SessionManager, type AgentSession } from '@earendil-works/pi-coding-agent';
 import { SleepStore } from './domain/index';
 import { createSleepTools, sleepContext } from './tools';
+import { reportsForEpisode } from './shared/episode';
 import { makeSession, testConnection, validateModelConfig, chatMessages, publicError } from './agent';
 import type { AppSnapshot, AppEvent, ModelConfig, Language, FactValue, SleepScope, Feedback, Investigation } from './shared/types';
 
@@ -186,7 +187,12 @@ export class SleepApp {
           } else this.store.buildReport(this.activeId());
           break;
         }
-        case 'feedback': this.store.recordFeedback(String(p.reportId), p.choice as Feedback['choice'], p.note as string | undefined); break;
+        case 'feedback': {
+          const state = this.snapshot();
+          if (!reportsForEpisode(state.reports, state.active).some(report => report.id === p.reportId)) throw new Error('REPORT_NOT_FOUND');
+          this.store.recordFeedback(String(p.reportId), p.choice as Feedback['choice'], p.note as string | undefined);
+          break;
+        }
         case 'delete': {
           const id = String(p.id); this.store.getInvestigation(id); this.removeSessions(id); this.store.deleteInvestigation(id);
           if (this.settings.activeId === id) delete this.settings.activeId; this.save(); break;

@@ -14,6 +14,7 @@
     "test": "tsx --test tests/*.test.ts",
     "eval:b01": "tsx --test tests/b01-*.test.ts",
     "eval:b02": "tsx --test tests/b02-*.test.ts",
+    "eval:b03": "tsx --test tests/b03-*.test.ts",
     "package": "electron-forge package --platform=win32 --arch=x64",
     "make": "electron-forge make --platform=win32 --arch=x64",
     "cli": "tsx src/cli.ts",
