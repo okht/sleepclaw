@@ -1,17 +1,8 @@
 import type { Fact, FactUncertainty, FactValue, Investigation, InvestigationPlan, InvestigationPlanInput } from '../shared/types.js';
+import { inferFactUncertainty } from '../shared/fact-contract.js';
+export { inferFactUncertainty } from '../shared/fact-contract.js';
 
 const MAX_ORIGINAL_LENGTH = 20_000;
-const uncertainWording = /\b(?:maybe|perhaps|possibly|uncertain|not sure|don['’]?t know|do not know|can['’]?t remember|cannot remember|can['’]?t recall|cannot recall)\b|记不清|记不太清|不确定|不知道|可能|也许|说不准/i;
-// Recognize uncertainty without extracting a measurement, date, or range.
-const approximateWording = /\b(?:about|around|approximately|roughly|approx\.?)\s+(?:\d|one\b|two\b|three\b|four\b|five\b|six\b|seven\b|eight\b|nine\b|ten\b|eleven\b|twelve\b|a (?:few|couple|half)\b|midnight\b|noon\b|bedtime\b)|大约|大概|约莫|差不多|(?:\d+(?:\.\d+)?|[一二三四五六七八九十半]+)(?:\s*(?:个小时|小时|分钟|点|时))?\s*左右/i;
-
-export function inferFactUncertainty(value: FactValue): FactUncertainty | undefined {
-  if (typeof value !== 'string' || !value.trim()) return undefined;
-  if (uncertainWording.test(value)) return { kind: 'uncertain', original: value };
-  if (approximateWording.test(value)) return { kind: 'approximate', original: value };
-  return undefined;
-}
-
 export function validateFactUncertainty(input: FactUncertainty | undefined, value: FactValue): FactUncertainty | undefined {
   if (input === undefined) return undefined;
   if (!input || typeof input !== 'object' || !['approximate', 'range', 'uncertain'].includes(input.kind)

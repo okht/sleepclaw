@@ -53,7 +53,7 @@ test('real MCP Client and linked transports expose shared schemas and privacy-sa
   try {
     await server.connect(serverTransport); await client.connect(clientTransport);
     const list = await client.listTools();
-    for (const name of ['sleep_context', 'sleep_create', 'sleep_import', 'sleep_target', 'sleep_data_query', 'sleep_health_analysis', 'sleep_fact', 'sleep_plan', 'sleep_question', 'sleep_report', 'sleep_feedback']) {
+    for (const name of ['sleep_context', 'sleep_create', 'sleep_import', 'sleep_target', 'sleep_data_query', 'sleep_health_analysis', 'sleep_fact', 'sleep_plan', 'sleep_question', 'sleep_report', 'sleep_resume', 'sleep_feedback']) {
       assert.ok(list.tools.some(item => item.name === name), name);
     }
     assert.equal(list.tools.find(item => item.name === 'sleep_health_analysis')?.annotations?.readOnlyHint, true);

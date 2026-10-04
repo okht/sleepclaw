@@ -111,12 +111,17 @@ test('exact numeric answers remain compatible and vague-looking prose never gets
       assert.equal(exact.value, 7.5);
       assert.equal(exact.uncertainty, undefined);
     }
-    for (const value of ['2026-09-21', '23:30', 'I worried about work', '6–8 hours']) {
+    for (const value of ['2026-09-21', '23:30', 'I worried about work', 'I slept 6–8 hours after working late']) {
       ask(store, id, 'sleep_duration_hours');
       const fact = store.answer(id, value);
       assert.equal(fact.value, value);
-      assert.equal(fact.uncertainty, undefined, 'do not infer uncertain dates or parse prose ranges');
+      assert.equal(fact.uncertainty, undefined, 'do not infer dates or extract measurements from a narrative');
     }
+    ask(store, id, 'sleep_duration_hours');
+    const ranged = store.answer(id, '6–8 hours');
+    assert.equal(ranged.value, '6–8 hours');
+    assert.deepEqual(ranged.uncertainty, { kind: 'range', original: '6–8 hours', lower: 6, upper: 8, unit: 'hours' });
+    assert.equal(store.buildReport(id).metrics.find(metric => metric.key === 'selfReportedSleepMinutes'), undefined);
   } finally { cleanup(); }
 });
 

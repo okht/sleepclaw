@@ -47,7 +47,7 @@ function sendToWindow(channel: string, value: unknown): void {
   if (window && !window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send(channel, value);
 }
 const pending = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>();
-const allowed = new Set(['state','language','configure','new','select','import','target','answer','fact','send','report','feedback','delete','deleteImport','deleteFact','cancel']);
+const allowed = new Set(['state','language','configure','new','select','import','target','answer','resume','continueLocal','continueWithModel','retryFollowup','fact','send','report','reportLocal','feedback','delete','deleteImport','deleteFact','cancel']);
 function request(method: string, params?: Record<string, unknown>): Promise<unknown> {
   return new Promise((resolvePromise, reject) => {
     if (!worker) return reject(new Error('NOT_READY'));

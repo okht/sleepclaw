@@ -124,8 +124,9 @@ test('range presentation requires explicit valid hour bounds and does not infer 
   try {
     const investigation = store.createInvestigation('Review this sleep', 'en');
     const fact = store.setFact(investigation.id, { topic: 'sleep_duration_hours', scope: 'sleep', value: '6–7 hours' });
+    assert.deepEqual(fact.uncertainty, { kind: 'range', original: '6–7 hours', lower: 6, upper: 7, unit: 'hours' });
     const invalid: Fact[] = [
-      fact,
+      { ...fact, uncertainty: undefined },
       { ...fact, uncertainty: { ...range, kind: 'approximate' } },
       { ...fact, uncertainty: { ...range, unit: 'minutes' } },
       { ...fact, uncertainty: { ...range, upper: undefined } },

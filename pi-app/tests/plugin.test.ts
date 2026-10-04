@@ -43,11 +43,19 @@ test('built plugin runs from a relocated path with spaces under both host launch
     try {
       await client.connect(transport);
       const listed = await client.listTools();
-      assert.equal(listed.tools.length, 11);
+      assert.equal(listed.tools.length, 12);
+      assert.ok(listed.tools.some(tool => tool.name === 'sleep_resume'));
       const result = await client.callTool({ name: 'sleep_create', arguments: { goal: 'Understand my sleep', language: 'en' } });
       assert.notEqual(result.isError, true);
       const content = result.content as Array<{ type: string; text: string }>;
-      assert.equal(JSON.parse(content[0].text).language, 'en');
+      const investigation = JSON.parse(content[0].text);
+      assert.equal(investigation.language, 'en');
+      const report = await client.callTool({ name: 'sleep_report', arguments: { investigationId: investigation.id, interpretation: '', action: '' } });
+      assert.notEqual(report.isError, true);
+      const resumed = await client.callTool({ name: 'sleep_resume', arguments: { investigationId: investigation.id } });
+      assert.notEqual(resumed.isError, true);
+      const resumedContent = resumed.content as Array<{ type: string; text: string }>;
+      assert.equal(JSON.parse(resumedContent[0].text).pendingQuestion.topic, 'age_range');
     } finally { await client.close(); }
   }
 });

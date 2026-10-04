@@ -6,6 +6,7 @@ import { buildInvestigationGuidance } from './domain/investigation.js';
 import { analyzeRecords } from './health/index.js';
 import { analyzeHealthEvidence, parseZonedTimestamp } from './health/evidence.js';
 import { reportsForEpisode } from './shared/episode.js';
+import { FACT_CONTRACT_GUIDANCE } from './shared/fact-contract.js';
 
 const text = (maxLength = 4000) => Type.String({ minLength: 1, maxLength });
 const scope = Type.Union([Type.Literal('profile'), Type.Literal('sleep')]);
@@ -51,11 +52,15 @@ export function createSleepTools(store: SleepStore, options: { investigationId?:
   const tools = [
     tool('sleep_context', 'Sleep context', 'Read current episode facts, pending question, uncertainty and plan status. Corrected facts and the selected sleepEpisodeId supersede chat history. Never restore another episode\'s statements. Without investigationId, list investigations for explicit selection.',
       options.investigationId ? {} : { investigationId: Type.Optional(text(100)) }, true, params => sleepContext(store, options.investigationId?.() ?? (params as { investigationId?: string }).investigationId), false),
-    tool('sleep_fact', 'Save a fact', 'Save only user-supplied facts. Preserve approximate/range/uncertain wording with uncertainty metadata; never convert a range to its midpoint. A correction replaces the previous fact. Separate profile habits from this sleep.', {
-      topic: text(101), value: Type.Union([Type.String({ maxLength: 20000 }), Type.Number(), Type.Boolean(), Type.Null()]), scope,
+    tool('sleep_fact', 'Save a fact', `A correction replaces the previous fact. ${FACT_CONTRACT_GUIDANCE}`, {
+      topic: Type.String({ minLength: 1, maxLength: 101, description: 'For this sleep use sleep_duration_hours (hours), remembered_awakenings (count), recovery (feeling after waking), recent_context (other context). Profile keys include age_range, usual_schedule, work_pattern. Other keys remain custom facts.' }), value: Type.Union([Type.String({ maxLength: 20000 }), Type.Number(), Type.Boolean(), Type.Null()]), scope,
       status: Type.Optional(Type.Union([Type.Literal('known'), Type.Literal('unknown')])),
       uncertainty: Type.Optional(Type.Object({ kind: Type.Union([Type.Literal('approximate'), Type.Literal('range'), Type.Literal('uncertain')]), original: text(), lower: Type.Optional(Type.Number()), upper: Type.Optional(Type.Number()), unit: Type.Optional(text(40)) }, { additionalProperties: false })),
     }, false, (params, id) => store.setFact(id, params)),
+    tool('sleep_resume', 'Continue adding information', 'Resume the saved question only when the user asks to continue adding information. This does not change facts or invalidate reports. If all fixed questions are already handled, returns no pending question. Never call this just because a report was created.', {}, false, (_params, id) => {
+      store.resumeCollection(id);
+      return sleepContext(store, id);
+    }),
     tool('sleep_question', 'One follow-up', 'Persist one useful next question before asking it, with a short reason. Do not ask for already known information or block a direct report.', {
       topic: text(101), text: text(), reason: Type.Optional(text()), scope,
     }, false, (params, id) => store.saveQuestion(id, { id: randomUUID(), ...params })),
@@ -133,7 +138,7 @@ export function sleepContext(store: SleepStore, investigationId?: string): unkno
   const { id, language, scope, createdAt, revision, start, end, source, pendingQuestion, plan, status } = active;
   const investigation = { id, language, scope, createdAt, revision, start, end, source, pendingQuestion, plan, status, sleepEpisodeId: episodeId,
     goal: episodeId === id ? active.goal : language === 'zh' ? '分析当前选择的睡眠；原调查目标中与其他睡眠相关的自述需要重新确认。' : 'Analyze the selected sleep. Statements in the original investigation goal about another sleep require confirmation.' };
-  return { ...base, language: active.language, investigation, facts: snapshot.facts, pendingQuestion: snapshot.question,
+  return { ...base, language: active.language, investigation, facts: snapshot.facts, factContract: FACT_CONTRACT_GUIDANCE, pendingQuestion: snapshot.question, canResume: snapshot.canResume,
     episodeNotice: 'Only the current sleepEpisodeId facts describe this sleep. Profile facts may apply across sleeps. Do not restore historical single-sleep statements from chat, goals, plans or feedback.',
     guidance: buildInvestigationGuidance(active, snapshot.facts),
     feedback: snapshot.feedback.filter(item => ids.has(item.reportId)).slice(-15),

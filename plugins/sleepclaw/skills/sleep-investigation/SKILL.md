@@ -18,6 +18,8 @@ The host assistant owns the conversation and tool selection. Never start a secon
 
 Use `sleep_fact` to retain the user's words. Separate a usual habit (`profile`) from one episode (`sleep`). Use null/unknown for skipped or unknown facts; do not translate unknown into false or zero.
 
+Use the core topics explicitly: `sleep_duration_hours` (sleep scope, hours), `remembered_awakenings` (sleep scope, count), and `recovery` (sleep scope, the user's feeling after waking). For exact durations, a number means hours; include units in a string for minutes. The legacy aliases `sleep_duration`, `wake_feeling`, and `waking_feeling` are accepted for compatibility. Keep broader complaints such as `sleep_complaint` as custom facts; the report's fact recap preserves them without assigning an unsupported meaning. Inspect the returned canonical fact and the final report columns, not just tool success.
+
 - 「六到七小时」 / six to seven hours: value stays a string; uncertainty is `range`, original is the actual quote, lower 6, upper 7, unit `hours`. Do not submit 6.5 as an exact fact.
 - 「好像三四点醒过」 / maybe around three or four: retain the wording with `uncertain`. Ask about the date/timezone only if needed to choose a query window. Do not manufacture an exact awakening timestamp or invent numeric bounds from an idiom.
 - Missing target, conflicting device sources, or an unclear calendar date can change which records get read: ask one selection/clarification question before `sleep_target`. Times require a timezone offset. A source-specific target keeps devices separate.

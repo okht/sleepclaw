@@ -5,17 +5,18 @@ import { Type } from 'typebox';
 import { InMemoryCredentialStore } from '@earendil-works/pi-ai';
 import { createAgentSession, DefaultResourceLoader, defineTool, ModelRuntime, SessionManager, SettingsManager, type AgentSession, type ToolDefinition } from '@earendil-works/pi-coding-agent';
 import type { ModelConfig, Language, ChatMessage } from './shared/types';
+import { FACT_CONTRACT_GUIDANCE } from './shared/fact-contract';
 
 // Only application-owned codes may cross the UI boundary. Upstream messages may contain secrets.
 const PUBLIC_ERROR_CODES = new Set([
-  'AUTH_FAILED', 'QUOTA', 'MODEL_NOT_FOUND', 'CANCELLED', 'TIMEOUT', 'REQUEST_FAILED',
+  'AUTH_FAILED', 'QUOTA', 'MODEL_NOT_FOUND', 'CANCELLED', 'TIMEOUT', 'TURN_LIMIT', 'REQUEST_FAILED',
   'CONFIG_REQUIRED', 'CONFIG_INVALID', 'BASE_URL_INVALID', 'TOOL_TEST_FAILED', 'MODEL_REQUIRED',
   'BUSY', 'TARGET_REQUIRED', 'SOURCE_REQUIRED', 'INVALID_ID', 'INVALID_LANGUAGE', 'INVALID_MESSAGE',
   'INVALID_QUERY_RANGE', 'UNKNOWN_METHOD', 'FACT_NOT_FOUND', 'FACT_TOO_LONG', 'IMPORT_CANCELLED',
   'IMPORT_IN_PROGRESS', 'IMPORT_NOT_FOUND', 'INVALID_DATE', 'INVALID_FACT_STATUS', 'INVALID_FACT_VALUE',
   'INVALID_FACT', 'INVALID_FEEDBACK', 'INVALID_GOAL', 'INVALID_INVESTIGATION', 'INVALID_QUESTION',
   'INVALID_SCOPE', 'INVALID_TARGET', 'INVALID_TIME_RANGE', 'INVESTIGATION_NOT_FOUND',
-  'NO_PENDING_QUESTION', 'QUERY_TOO_LARGE_NARROW_TIME_RANGE', 'REPORT_NOT_FOUND', 'REPORT_TEXT_TOO_LONG',
+  'NO_PENDING_QUESTION', 'NO_PENDING_FOLLOWUP', 'QUERY_TOO_LARGE_NARROW_TIME_RANGE', 'REPORT_NOT_FOUND', 'REPORT_TEXT_TOO_LONG',
   'INVALID_TOOL_ARGUMENTS', 'TIMEZONE_REQUIRED', 'INVALID_FACT_UNCERTAINTY', 'INVALID_PLAN', 'PLAN_STALE', 'EPISODE_CHANGED',
 ]);
 
@@ -49,6 +50,8 @@ export function publicError(error: unknown, language: Language): { code: string;
     MODEL_NOT_FOUND: ['找不到模型，请检查模型名称和服务地址。', 'Model not found. Check its name and base URL.'],
     CANCELLED: ['已取消，已经保存的信息会保留。', 'Cancelled. Previously saved information is retained.'],
     TIMEOUT: ['连接超时，请检查网络后重试。', 'Request timed out. Check your connection and retry.'],
+    TURN_LIMIT: ['模型本轮分析已达到次数上限，已保存的信息会保留。', 'The model reached the turn limit. Saved information is retained.'],
+    NO_PENDING_FOLLOWUP: ['当前没有需要重试的续问，请继续当前问题。', 'There is no pending follow-up to retry. Continue with the current question.'],
     CONFIG_REQUIRED: ['请填写服务商、模型名称和 API Key。', 'Enter a provider, model name and API key.'],
     CONFIG_INVALID: ['模型配置格式无效，请检查协议、名称和密钥。', 'Invalid model configuration. Check its protocol, name and key.'],
     BASE_URL_INVALID: ['请输入 HTTPS 地址；本机服务可以使用 HTTP。', 'Use an HTTPS URL; HTTP is allowed for localhost.'],
@@ -69,6 +72,7 @@ export const SYSTEM_PROMPT = `You are SleepClaw, a personal sleep investigation 
 Use the user's selected language. Explain metrics in everyday language. No clinical diagnoses or treatment protocols.
 The supplied current domain snapshot and sleepEpisodeId are authoritative; previous chat facts may be superseded. Never restore a corrected, deleted or different-episode fact from old conversation. When the selected episode changes, use only that episode's current sleep facts plus shared profile facts. Statements in historical goals, plans, reports and feedback never establish facts for a different sleep without explicit user confirmation.
 Ask exactly ONE question at a time. Save each question via sleep_question before showing it. Distinguish profile habits from a single sleep's facts; skipped means unknown. Save facts only actually supplied by the user, without guessing numbers from vague answers.
+${FACT_CONTRACT_GUIDANCE}
 Use sleep_context to see pending fixed questions; avoid repeating known answers. Gather necessary basics gently and permit skipping or a direct report at any time.
 For multi-step investigations save a short user-visible sleep_plan with the current revision; update it after facts or target change. Read guidance for uncertainty and stale plans. Do not expose private chain-of-thought. A simple request can go straight to the relevant tool.
 Preserve vague recollections with sleep_fact uncertainty metadata and the actual original quote. A range or approximate answer stays a string/unknown; never turn it into an exact midpoint. Ask only when the ambiguity affects the next query or conclusion; otherwise keep the limitation and proceed. Dates/timezones and conflicting device sources need confirmation before selecting records.

@@ -30,15 +30,16 @@ if (args.includes('--help')) {
     else if (!stdin.isTTY) { let input = ''; for await (const chunk of stdin) input += chunk; if (input.trim()) await application.request('send', { text: input }); else console.log(JSON.stringify(application.snapshot(), null, 2)); }
     else {
       const rl = createInterface({ input: stdin, output: stdout });
-      console.log('SleepClaw — /new /skip /report /ask /exit');
+      console.log('SleepClaw — /new /skip /report /continue /ask /exit');
       try {
         while (true) {
           const state = application.snapshot();
-          const text = await rl.question(`${state.question?.text ?? (language === 'zh' ? '想了解哪次睡眠？' : 'Which sleep would you like to understand?')}\n> `);
+          const text = await rl.question(`${state.question?.text ?? (state.canResume ? (language === 'zh' ? '输入 /continue 继续补充，或 /report 查看报告。' : 'Use /continue to add information, or /report to view the report.') : (language === 'zh' ? '想了解哪次睡眠？' : 'Which sleep would you like to understand?'))}\n> `);
           if (text === '/exit') break;
           try {
             if (text.startsWith('/new ')) await application.request('new', { goal: text.slice(5) });
             else if (text === '/skip') await application.request('answer', { skip: true });
+            else if (text === '/continue') await application.request('resume');
             else if (text === '/report') { const reportState = await application.request('report'); console.log(latestActiveReport(reportState)?.markdown ?? (language === 'zh' ? '本次调查尚未生成有效报告。' : 'No current report for this investigation.')); }
             else if (text.startsWith('/ask ')) await application.request('send', { text: text.slice(5) });
             else if (!state.active) await application.request('new', { goal: text });

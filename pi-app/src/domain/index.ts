@@ -6,7 +6,8 @@ import { analyzeRecords, identifyCandidates, importAppleHealth } from '../health
 import type { Analysis, DomainSnapshot, Fact, FactInput, FactValue, Feedback, HealthRecord, ImportSummary, Investigation, InvestigationPlan, InvestigationPlanInput, Language, Question, Report, SleepScope } from '../shared/types.js';
 import { questionDefinitions } from './questions.js';
 import { buildTimeline, renderReport, reportContent } from './report.js';
-import { inferFactUncertainty, validateFactUncertainty, validateInvestigationPlan } from './investigation.js';
+import { validateFactUncertainty, validateInvestigationPlan } from './investigation.js';
+import { canonicalFactTopic, normalizeFactInput } from '../shared/fact-contract.js';
 import { selectSleepEpisode, type SleepEpisode, type SleepTarget } from './sleep-episodes.js';
 
 type Row = Record<string, unknown>;
@@ -14,6 +15,21 @@ type RecordQuery = { start?: string; end?: string; source?: string; type?: Healt
 const MAX_QUERY_RECORDS = 50_000;
 const iso = () => new Date().toISOString();
 const parse = <T>(row: Row | undefined): T | undefined => row ? JSON.parse(String(row.data)) as T : undefined;
+const factTime = (fact: Fact) => Number.isFinite(Date.parse(fact.updatedAt)) ? Date.parse(fact.updatedAt) : 0;
+function newerFact(a: Fact, b: Fact): number {
+  return factTime(a) - factTime(b) || a.revision - b.revision
+    || Number(a.topic === canonicalFactTopic(a.topic, a.scope)) - Number(b.topic === canonicalFactTopic(b.topic, b.scope))
+    || a.id.localeCompare(b.id);
+}
+function projectFacts(facts: Fact[]): Fact[] {
+  const winners = new Map<string, Fact>();
+  for (const fact of facts) {
+    const key = `${fact.scope}:${canonicalFactTopic(fact.topic, fact.scope)}`;
+    const previous = winners.get(key);
+    if (!previous || newerFact(fact, previous) > 0) winners.set(key, fact);
+  }
+  return [...winners.values()].map(fact => ({ ...fact, ...normalizeFactInput(fact) }));
+}
 
 export class SleepStore {
   readonly home: string;
@@ -29,6 +45,7 @@ export class SleepStore {
     this.db = new DatabaseSync(join(this.home, 'sleepclaw.sqlite'));
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS investigations (id TEXT PRIMARY KEY, data TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS migrations (id TEXT PRIMARY KEY);
       CREATE TABLE IF NOT EXISTS sleep_episodes (id TEXT PRIMARY KEY, investigation_id TEXT NOT NULL, data TEXT NOT NULL, FOREIGN KEY(investigation_id) REFERENCES investigations(id) ON DELETE CASCADE);
       CREATE INDEX IF NOT EXISTS sleep_episode_investigation_idx ON sleep_episodes(investigation_id);
       CREATE TABLE IF NOT EXISTS facts (id TEXT PRIMARY KEY, owner TEXT NOT NULL, topic TEXT NOT NULL, data TEXT NOT NULL, UNIQUE(owner, topic));
@@ -48,6 +65,28 @@ export class SleepStore {
         this.saveInvestigation(investigation);
       }
     });
+    // Keep legacy rows intact. Current facts are a deterministic projection; old
+    // reports affected by this new interpretation must be regenerated explicitly.
+    try { if (!this.db.prepare('SELECT id FROM migrations WHERE id=?').get('fact-contract-v1')) this.transaction(() => {
+      const changed = this.db.prepare('SELECT data FROM facts').all().map(row => parse<Fact>(row)!).filter(fact => JSON.stringify(normalizeFactInput(fact)) !== JSON.stringify(fact));
+      const investigations = this.rows<Investigation>('investigations');
+      const affected = new Set(changed.some(fact => fact.scope === 'profile') ? investigations.map(item => item.id) : changed.map(fact => fact.investigationId).filter((id): id is string => Boolean(id)));
+      for (const id of affected) if (investigations.some(item => item.id === id)) {
+        this.invalidate(id);
+        const investigation = this.getInvestigation(id);
+        const facts = this.factsFor(id);
+        const definitions = questionDefinitions(investigation.language);
+        for (const field of ['pendingQuestion', 'pausedQuestion'] as const) {
+          const question = investigation[field];
+          if (!question) continue;
+          const canonical = canonicalFactTopic(question.topic, question.scope);
+          const fixed = definitions.find(item => item.topic === canonical && item.scope === question.scope);
+          if (fixed?.text === question.text && fixed.reason === question.reason && facts.some(fact => fact.topic === canonical && fact.scope === question.scope)) delete investigation[field];
+        }
+        this.saveInvestigation(investigation);
+      }
+      this.db.prepare('INSERT INTO migrations (id) VALUES (?)').run('fact-contract-v1');
+    }); } catch (error) { this.db.close(); throw error; }
   }
 
   private writable(): void { if (this.importing) throw new Error('IMPORT_IN_PROGRESS'); }
@@ -69,7 +108,7 @@ export class SleepStore {
   }
   private factsFor(id: string): Fact[] {
     const investigation = this.getInvestigation(id);
-    return this.db.prepare("SELECT data FROM facts WHERE owner = 'profile' OR owner = ? ORDER BY rowid").all(investigation.sleepEpisodeId ?? id).map(row => parse<Fact>(row) as Fact);
+    return projectFacts(this.db.prepare("SELECT data FROM facts WHERE owner = 'profile' OR owner = ? ORDER BY rowid").all(investigation.sleepEpisodeId ?? id).map(row => parse<Fact>(row) as Fact));
   }
   private saveEpisode(episode: SleepEpisode): void {
     this.db.prepare('INSERT INTO sleep_episodes (id,investigation_id,data) VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data').run(episode.id, episode.investigationId, JSON.stringify(episode));
@@ -94,10 +133,14 @@ export class SleepStore {
     this.writable();
     if (!['zh', 'en'].includes(language)) throw new Error('INVALID_LANGUAGE');
     const investigation = this.getInvestigation(id);
+    const previousDefinitions = questionDefinitions(investigation.language);
     investigation.language = language;
-    if (investigation.pendingQuestion) {
-      const translated = questionDefinitions(language).find(q => q.topic === investigation.pendingQuestion!.topic && q.scope === investigation.pendingQuestion!.scope);
-      if (translated) investigation.pendingQuestion = { id: investigation.pendingQuestion.id, ...translated };
+    for (const field of ['pendingQuestion', 'pausedQuestion'] as const) if (investigation[field]) {
+      const question = investigation[field]!;
+      const original = previousDefinitions.find(q => q.topic === question.topic && q.scope === question.scope);
+      if (!original || original.text !== question.text || original.reason !== question.reason) continue;
+      const translated = questionDefinitions(language).find(q => q.topic === question.topic && q.scope === question.scope);
+      if (translated) investigation[field] = { id: question.id, ...translated };
     }
     this.saveInvestigation(investigation);
     return investigation;
@@ -106,12 +149,13 @@ export class SleepStore {
   snapshot(activeId?: string): DomainSnapshot {
     const investigations = this.rows<Investigation>('investigations').sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     const active = activeId ? investigations.find(i => i.id === activeId) : investigations[0];
-    const facts = active ? this.factsFor(active.id) : this.db.prepare("SELECT data FROM facts WHERE owner='profile'").all().map(row => parse<Fact>(row) as Fact);
+    const facts = active ? this.factsFor(active.id) : projectFacts(this.db.prepare("SELECT data FROM facts WHERE owner='profile'").all().map(row => parse<Fact>(row) as Fact));
     const reports = this.rows<Report>('reports').sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.revision - a.revision);
     // A many-year export must not make the welcome screen load every observation.
     const candidateRecords = this.db.prepare("SELECT r.data FROM health_records r WHERE r.type='sleep' AND EXISTS (SELECT 1 FROM import_records ir JOIN imports i ON i.id=ir.import_id WHERE ir.record_id=r.id) ORDER BY r.start DESC LIMIT 5000").all().map(row => parse<HealthRecord>(row) as HealthRecord);
     const candidates = identifyCandidates(candidateRecords).sort((a, b) => b.start.localeCompare(a.start)).slice(0, 100);
-    return { investigations, active, facts, imports: this.rows<ImportSummary>('imports'), candidates, reports, feedback: this.rows<Feedback>('feedback'), question: active?.pendingQuestion };
+    const canResume = Boolean(active && !active.pendingQuestion && (active.pausedQuestion || questionDefinitions(active.language).some(q => !facts.some(f => f.scope === q.scope && f.topic === q.topic))));
+    return { investigations, active, facts, imports: this.rows<ImportSummary>('imports'), candidates, reports, feedback: this.rows<Feedback>('feedback'), question: active?.pendingQuestion, canResume };
   }
 
   createInvestigation(goal: string, language: Language, scope: SleepScope = 'main'): Investigation {
@@ -159,6 +203,7 @@ export class SleepStore {
       if (episode.id !== investigation.sleepEpisodeId) delete investigation.plan;
       // Device/window-specific questions cannot follow the user to a different target.
       delete investigation.pendingQuestion;
+      delete investigation.pausedQuestion;
       Object.assign(investigation, normalized, { sleepEpisodeId: episode.id });
       this.saveInvestigation(investigation);
       this.invalidate(id);
@@ -217,18 +262,23 @@ export class SleepStore {
     if (typeof input.value === 'number' && !Number.isFinite(input.value)) throw new Error('INVALID_FACT_VALUE');
     if (!['string', 'number', 'boolean'].includes(typeof input.value) && input.value !== null) throw new Error('INVALID_FACT_VALUE');
     if (typeof input.value === 'string' && input.value.length > 20_000) throw new Error('FACT_TOO_LONG');
+    input = normalizeFactInput(input);
     const status = input.status ?? (input.value === null ? 'unknown' : 'known');
     const originalUnknown = status === 'unknown' && typeof input.value === 'string' && input.value.trim()
       ? { kind: 'uncertain' as const, original: input.value } : undefined;
     const uncertainty = validateFactUncertainty(input.uncertainty === undefined ? originalUnknown : input.uncertainty, input.value);
     const owner = input.scope === 'profile' ? 'profile' : investigation.sleepEpisodeId ?? id;
     const previous = parse<Fact>(this.db.prepare('SELECT data FROM facts WHERE owner=? AND topic=?').get(owner, input.topic));
-    const fact: Fact = { id: previous?.id ?? randomUUID(), topic: input.topic, value: status === 'unknown' ? null : input.value, status, scope: input.scope, ...(uncertainty ? { uncertainty } : {}), investigationId: input.scope === 'sleep' ? id : undefined, ...(input.scope === 'sleep' ? { sleepEpisodeId: owner } : {}), revision: (previous?.revision ?? 0) + 1, updatedAt: iso() };
+    const related = this.db.prepare('SELECT data FROM facts WHERE owner=?').all(owner).map(row => parse<Fact>(row)!).filter(fact => canonicalFactTopic(fact.topic, fact.scope) === input.topic);
+    const fact: Fact = { id: previous?.id ?? randomUUID(), topic: input.topic, value: status === 'unknown' ? null : input.value, status, scope: input.scope, ...(uncertainty ? { uncertainty } : {}), investigationId: input.scope === 'sleep' ? id : undefined, ...(input.scope === 'sleep' ? { sleepEpisodeId: owner } : {}), revision: Math.max(0, ...related.map(fact => fact.revision)) + 1, updatedAt: new Date(Math.max(Date.now(), ...related.map(fact => factTime(fact) + 1))).toISOString() };
     this.transaction(() => {
       this.db.prepare('INSERT OR REPLACE INTO facts (id,owner,topic,data) VALUES (?,?,?,?)').run(fact.id, owner, input.topic, JSON.stringify(fact));
       const affected = input.scope === 'profile' ? this.rows<Investigation>('investigations') : [this.getInvestigation(id)];
       for (const investigation of affected) {
-        if (investigation.pendingQuestion?.topic === fact.topic && investigation.pendingQuestion.scope === fact.scope) { delete investigation.pendingQuestion; this.saveInvestigation(investigation); }
+        for (const field of ['pendingQuestion', 'pausedQuestion'] as const) {
+          if (investigation[field]?.scope === fact.scope && canonicalFactTopic(investigation[field]!.topic, fact.scope) === fact.topic) delete investigation[field];
+        }
+        this.saveInvestigation(investigation);
         this.invalidate(investigation.id);
       }
     });
@@ -237,7 +287,7 @@ export class SleepStore {
 
   nextQuestion(id: string): Question | undefined {
     const investigation = this.getInvestigation(id);
-    if (investigation.status === 'reported') return undefined;
+    if (investigation.status === 'reported' || investigation.pausedQuestion) return undefined;
     if (investigation.pendingQuestion) return investigation.pendingQuestion;
     this.writable();
     const facts = this.factsFor(id);
@@ -253,20 +303,46 @@ export class SleepStore {
     this.writable();
     if (!question.text.trim() || question.text.length > 4_000 || !/^[a-zA-Z][a-zA-Z0-9_.-]{0,100}$/.test(question.topic) || !['sleep', 'profile'].includes(question.scope)) throw new Error('INVALID_QUESTION');
     const investigation = this.getInvestigation(id);
-    investigation.pendingQuestion = { ...question, id: question.id || randomUUID() };
+    delete investigation.pausedQuestion;
+    investigation.pendingQuestion = { ...question, topic: canonicalFactTopic(question.topic, question.scope), id: question.id || randomUUID() };
     investigation.status = 'collecting';
     this.saveInvestigation(investigation);
     return investigation.pendingQuestion;
   }
 
+  /** Resume collection explicitly; viewing a report or reopening the app never restarts questions. */
+  resumeCollection(id: string): Question | undefined {
+    this.writable();
+    return this.transaction(() => {
+      const investigation = this.getInvestigation(id);
+      if (investigation.pausedQuestion) {
+        investigation.pendingQuestion = investigation.pausedQuestion;
+        delete investigation.pausedQuestion;
+      }
+      investigation.status = 'collecting';
+      this.saveInvestigation(investigation);
+      // Legacy reports discarded their question. Recover the first unhandled
+      // fixed topic, without fabricating a deleted custom question.
+      return this.nextQuestion(id);
+    });
+  }
+
+  pauseCollection(id: string): void {
+    this.writable();
+    this.savePausedCollection(this.getInvestigation(id));
+  }
+
+  private savePausedCollection(investigation: Investigation): void {
+    if (investigation.pendingQuestion) investigation.pausedQuestion = investigation.pendingQuestion;
+    delete investigation.pendingQuestion;
+    investigation.status = 'reported';
+    this.saveInvestigation(investigation);
+  }
+
   answer(id: string, value: FactValue, skip = false): Fact {
     const question = this.getInvestigation(id).pendingQuestion ?? this.nextQuestion(id);
     if (!question) throw new Error('NO_PENDING_QUESTION');
-    const uncertainty = inferFactUncertainty(value);
-    // Plain numeric text entered into a known numeric question is explicit user input.
-    // Narrative answers and unknown values are kept verbatim, without guessing a number.
-    if (!skip && typeof value === 'string' && ['sleep_duration_hours', 'remembered_awakenings'].includes(question.topic) && /^(?:\d+(?:\.\d*)?|\.\d+)$/.test(value.trim())) value = Number(value.trim());
-    const fact = this.setFact(id, { topic: question.topic, scope: question.scope, value, status: skip || value === null ? 'unknown' : 'known', ...(uncertainty ? { uncertainty } : {}) });
+    const fact = this.setFact(id, { topic: question.topic, scope: question.scope, value, status: skip || value === null ? 'unknown' : 'known' });
     this.nextQuestion(id);
     return fact;
   }
@@ -283,14 +359,12 @@ export class SleepStore {
     const content = { ...reportContent(investigation, this.factsFor(id), analysis, this.rows<Feedback>('feedback'), aiInterpretation, aiAction, previousReports), timeline: timeline.timeline };
     if (timeline.truncated) content.limitations.push(investigation.language === 'zh' ? '时间线较长，仅展示前 200 段；指标仍基于全部选定记录计算。' : 'The timeline is long; only its first 200 segments are shown. Metrics still use all selected records.');
     const unchanged = existing.find(report => report.status === 'complete' && Object.entries(content).every(([key, value]) => JSON.stringify(report[key as keyof Report]) === JSON.stringify(value)));
-    if (unchanged) { investigation.status = 'reported'; delete investigation.pendingQuestion; this.saveInvestigation(investigation); this.exportReport(unchanged); return unchanged; }
+    if (unchanged) { this.savePausedCollection(investigation); this.exportReport(unchanged); return unchanged; }
     const report: Report = { id: randomUUID(), revision: existing.reduce((max, r) => Math.max(max, r.revision), 0) + 1, createdAt: iso(), ...content, markdown: '' };
     report.markdown = renderReport(report);
     this.transaction(() => {
       this.db.prepare('INSERT INTO reports (id,investigation_id,data) VALUES (?,?,?)').run(report.id, id, JSON.stringify(report));
-      investigation.status = 'reported';
-      delete investigation.pendingQuestion;
-      this.saveInvestigation(investigation);
+      this.savePausedCollection(investigation);
     });
     this.exportReport(report);
     return report;
@@ -327,11 +401,17 @@ export class SleepStore {
     const fact = parse<Fact>(this.db.prepare('SELECT data FROM facts WHERE id=?').get(factId));
     if (!fact) throw new Error('FACT_NOT_FOUND');
     this.transaction(() => {
-      this.db.prepare('DELETE FROM facts WHERE id=?').run(factId);
+      const owner = fact.scope === 'profile' ? 'profile' : fact.sleepEpisodeId ?? fact.investigationId;
+      const topic = canonicalFactTopic(fact.topic, fact.scope);
+      // Deleting the currently projected fact removes every legacy synonym too;
+      // an earlier value must never reappear after the user deletes information.
+      const related = this.db.prepare('SELECT data FROM facts WHERE owner=?').all(owner!).map(row => parse<Fact>(row)!).filter(item => canonicalFactTopic(item.topic, item.scope) === topic);
+      for (const item of related) this.db.prepare('DELETE FROM facts WHERE id=?').run(item.id);
       const affected = fact.scope === 'profile' ? this.rows<Investigation>('investigations') : [this.getInvestigation(fact.investigationId!)];
       this.deleteLinkedReports(affected.map(item => item.id));
       for (const investigation of affected) {
         delete investigation.pendingQuestion;
+        delete investigation.pausedQuestion;
         delete investigation.plan;
         this.saveInvestigation(investigation);
         this.invalidate(investigation.id);
@@ -347,6 +427,7 @@ export class SleepStore {
       this.deleteLinkedReports(investigations.map(item => item.id));
       for (const investigation of investigations) {
         delete investigation.pendingQuestion;
+        delete investigation.pausedQuestion;
         delete investigation.plan;
         this.saveInvestigation(investigation);
         this.invalidate(investigation.id);
@@ -387,6 +468,7 @@ export class SleepStore {
       // unselected investigation can have a follow-up quoting the removed import.
       for (const investigation of investigations) {
         delete investigation.pendingQuestion;
+        delete investigation.pausedQuestion;
         delete investigation.plan;
         this.saveInvestigation(investigation);
       }

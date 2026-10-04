@@ -1,4 +1,5 @@
 import type { Analysis, Fact, Feedback, HealthRecord, Investigation, Metric, Report } from '../shared/types.js';
+import { factTopicLabel } from '../shared/fact-contract.js';
 
 function numberFact(facts: Fact[], topic: string): number | undefined {
   const fact = facts.find(f => f.scope === 'sleep' && f.topic === topic && f.status === 'known');
@@ -12,7 +13,12 @@ function recalledDurationRange(facts: Fact[], zh: boolean): string | undefined {
   const range = fact?.uncertainty;
   if (range?.kind !== 'range' || range.unit !== 'hours'
     || typeof range.lower !== 'number' || !Number.isFinite(range.lower) || range.lower < 0
-    || typeof range.upper !== 'number' || !Number.isFinite(range.upper) || range.upper < range.lower) return undefined;
+    || typeof range.upper !== 'number' || !Number.isFinite(range.upper) || range.upper < range.lower) {
+    if (typeof fact?.value === 'string' && fact.value.trim()) return zh
+      ? `自述睡眠时长：${fact.value}；保留原话，未换算成精确时长。`
+      : `Recalled sleep duration: ${fact.value}. Original wording is retained without calculating an exact duration.`;
+    return undefined;
+  }
   return zh
     ? `自述估计睡眠时长为 ${range.lower}～${range.upper} 小时；保留为范围，不换算成精确时长。`
     : `Estimated sleep duration: ${range.lower}–${range.upper} hours (self-reported range). No exact duration is calculated from this range.`;
@@ -73,7 +79,7 @@ export function reportContent(investigation: Investigation, facts: Fact[], analy
   const summary = duration
     ? (zh ? `${scope}有 ${duration.value} 分钟的时长记录。先结合你的恢复感和记录覆盖情况理解，暂不根据单一数字判断睡得好坏。` : `This ${scope} has ${duration.value} recorded sleep minutes. Consider your recovery and data coverage before judging overall sleep quality.`)
     : recalledRange ?? (zh ? '目前已整理你的目标和已提供的信息；资料尚不足以计算睡眠时长或评分。你仍可继续补充或查看这份阶段性记录。' : 'Your goal and available information have been recorded. There is not enough information to calculate sleep duration or a score yet. You may add details or keep this preliminary report.');
-  return { investigationId: investigation.id, sleepEpisodeId: investigation.sleepEpisodeId, factRevision: investigation.revision, language: investigation.language, title: zh ? `SleepClaw · ${scope}分析` : `SleepClaw · ${scope} analysis`, summary, basis: { start: investigation.start, end: investigation.end, source: investigation.source, scope: investigation.scope }, metrics, dimensions, score: null, scoreVersion: 'unscored-v1', limitations: [...new Set(limitations)], action, aiInterpretation: aiInterpretation?.trim() || undefined, status: 'complete' };
+  return { investigationId: investigation.id, sleepEpisodeId: investigation.sleepEpisodeId, factRevision: investigation.revision, language: investigation.language, title: zh ? `SleepClaw · ${scope}分析` : `SleepClaw · ${scope} analysis`, summary, basis: { start: investigation.start, end: investigation.end, source: investigation.source, scope: investigation.scope }, metrics, dimensions, reportedFacts: facts.map(fact => ({ ...fact, ...(fact.uncertainty ? { uncertainty: { ...fact.uncertainty } } : {}) })), score: null, scoreVersion: 'unscored-v1', limitations: [...new Set(limitations)], action, aiInterpretation: aiInterpretation?.trim() || undefined, status: 'complete' };
 }
 
 export function buildTimeline(records: HealthRecord[], investigation: Investigation): { timeline: NonNullable<Report['timeline']>; truncated: boolean } {
@@ -148,6 +154,12 @@ export function renderReport(report: Omit<Report, 'markdown'>): string {
     `## ${zh ? '五个维度' : 'Five dimensions'}`, '', ...report.dimensions.map(d => `- **${zh ? dimensionLabels[d.key] ?? d.key : d.key}**：${d.text}`), '',
     `## ${zh ? '计算和记录结果' : 'Calculated and recorded results'}`, '',
     zh ? '| 指标 | 数值 | 单位 | 来源 |' : '| Metric | Value | Unit | Source |', '| --- | --- | --- | --- |', ...rows, '',
+    ...((report.reportedFacts?.length ?? 0) > 0 ? [
+      `## ${zh ? '本次采用的自述与档案' : 'Reported facts used in this revision'}`, '',
+      zh ? '以下为生成这一修订时的事实快照；自定义记录只作背景，不会自动归为恢复感或确切数值。' : 'This is the fact snapshot used for this revision. Custom records provide context without automatically becoming recovery assessments or exact measurements.', '',
+      zh ? '| 范围 | 项目 | 已记录内容 |' : '| Scope | Topic | Recorded answer |', '| --- | --- | --- |',
+      ...report.reportedFacts!.map(fact => `| ${fact.scope === 'profile' ? (zh ? '个人档案' : 'Profile') : (zh ? '本次睡眠' : 'This sleep')} | ${escapeCell(factTopicLabel(fact.topic, report.language))} | ${escapeCell(fact.status === 'unknown' ? `${zh ? '未知／已跳过' : 'Unknown / skipped'}${fact.uncertainty?.original ? `: ${fact.uncertainty.original}` : ''}` : fact.uncertainty?.original ?? fact.value)} |`), '',
+    ] : []),
     ...((report.timeline?.length ?? 0) > 0 ? [`## ${zh ? '记录时间线' : 'Recorded timeline'}`, '', zh ? '时间包含时区；空白间隔代表缺少记录，无法据此判断清醒。' : 'Times include a timezone. Gaps mean missing records and do not establish wakefulness.', '', zh ? '| 开始 | 结束 | 阶段 |' : '| Start | End | Stage |', '| --- | --- | --- |', ...report.timeline!.map(item => `| ${item.start} | ${item.end} | ${stageLabels[item.stage] ?? escapeCell(item.stage)} |`), ''] : []),
     ...(report.aiInterpretation ? [`## ${zh ? 'AI 解读' : 'AI interpretation'}`, '', zh ? '以下解释由模型生成，可能存在错误；请结合记录与自身感受判断。' : 'The following interpretation is AI-generated and may be wrong. Consider the records and your own experience.', '', report.aiInterpretation, ''] : []),
     `## ${zh ? '今晚最值得做的一件事' : 'One next action'}`, '', report.action, '',

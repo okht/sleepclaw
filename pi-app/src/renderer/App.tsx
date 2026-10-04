@@ -5,12 +5,14 @@ import {
 } from '@assistant-ui/react';
 import { useTranslation } from 'react-i18next';
 import type { AppSnapshot, ChatMessage, Fact, Investigation, Language, Metric, Report, SleepScope } from '../shared/types';
-import { applyStreamEvent, conversationFacts, displayNumber, errorKey, formatDate, formatReportTime, isSnapshot, localizedRecordText, manualTargetPayload, orderedReports, toDatetimeLocal, visibleMessages } from './ui-model';
+import { applyStreamEvent, conversationFacts, displayNumber, errorKey, factDisplayValue, formatDate, formatReportTime, isSnapshot, localizedRecordText, manualTargetPayload, orderedReports, toDatetimeLocal, visibleMessages } from './ui-model';
 import { reportsForEpisode } from '../shared/episode';
+import { factTopicLabel } from '../shared/fact-contract';
 
 const owl = new URL('./assets/owl-mark.svg', import.meta.url).href;
 type Tab = 'chat' | 'data' | 'reports';
 type Action = (method: string, params?: Record<string, unknown>) => Promise<boolean>;
+type MakeReport = (local?: boolean) => Promise<void>;
 
 function Owl({ large = false }: { large?: boolean }) {
   return <img className={large ? 'owl owl-large' : 'owl'} src={owl} alt="" aria-hidden="true" />;
@@ -181,7 +183,7 @@ export function App() {
       if (path && await action('import', { path })) { setOffline(true); setSettings(false); setTab('data'); }
     } catch { await refresh(); }
   };
-  const makeReport = async () => { if (await action('report')) setTab('reports'); };
+  const makeReport: MakeReport = async (local = false) => { if (await action(local ? 'reportLocal' : 'report')) setTab('reports'); };
   const changeLanguage = () => void action('language', { language: state?.language === 'zh' ? 'en' : 'zh' });
   const controls = <div className="window-controls">
     <button className="quiet-button" onClick={changeLanguage} aria-label={t('language')}>{state?.language === 'en' ? '中文' : 'EN'}</button>
@@ -190,7 +192,7 @@ export function App() {
   if (!state) return <><DesktopTitlebar /><main className="loading-page"><Owl large /><p role="status">{error || t('loading')}</p>{error ? <button onClick={() => void refresh()}>{t('retry')}</button> : null}</main></>;
   const blocked = pending > 0 || state.busy;
   // A not-yet-created analysis has no selected report or single-sleep data.
-  const viewState = newAnalysis ? { ...state, active: undefined, question: undefined, messages: [], facts: state.facts.filter(fact => fact.scope === 'profile') } : state;
+  const viewState = newAnalysis ? { ...state, active: undefined, question: undefined, canResume: false, notice: undefined, localCollection: false, messages: [], facts: state.facts.filter(fact => fact.scope === 'profile') } : state;
   const showConnection = settings || (!state.configured && !offline);
   return <div className={showConnection ? 'app connection-app' : 'app'}>
     <DesktopTitlebar>{controls}</DesktopTitlebar>
@@ -215,13 +217,14 @@ export function App() {
           <div className="tabs" role="tablist" aria-label="SleepClaw">
             {(['chat', 'data', 'reports'] as const).map((item) => <button key={item} role="tab" aria-selected={tab === item} aria-controls={`panel-${item}`} id={`tab-${item}`} className={tab === item ? 'selected' : ''} onClick={() => setTab(item)}>{t(item)}</button>)}
           </div>
-          <div className="header-right"><button className="model-button" onClick={() => setSettings(true)} disabled={blocked} title={t('settings')} aria-label={state.model?.model ? `${t('settings')}: ${state.model.model}` : t('settings')}><span className={`status-dot ${state.configured ? 'connected' : ''}`} /><span>{state.model?.model || t('connectModel')}</span></button></div>
+          <div className="header-right"><ModelConnectionButton state={state} blocked={blocked} onConnect={() => setSettings(true)} /></div>
         </header>
+        {!newAnalysis ? <RecoveryNotice state={state} action={action} blocked={blocked} makeReport={makeReport} onContinue={() => setTab('chat')} onConnect={() => setSettings(true)} /> : null}
         <div className={`workspace-content ${tab === 'chat' && state.active && !newAnalysis ? 'workspace-content-thread' : ''}`} role="tabpanel" aria-labelledby={`tab-${tab}`} id={`panel-${tab}`}>
           {tab === 'chat' ? (!state.active || newAnalysis ? <Welcome state={state} action={action} importFile={importFile} blocked={blocked} onStarted={() => setNewAnalysis(false)} onConnect={() => setSettings(true)} />
             : <ChatPanel key={state.active.id} state={state} delta={delta} action={action} importFile={importFile} makeReport={makeReport} blocked={blocked} onConnect={() => setSettings(true)} onOpenData={() => setTab('data')} onOpenReports={() => setTab('reports')} />) : null}
           {tab === 'data' ? <DataPanel key={viewState.active?.id || 'unselected'} state={viewState} action={action} blocked={blocked} importFile={importFile} /> : null}
-          {tab === 'reports' ? <ReportsPanel key={`${viewState.active?.id ?? 'unselected'}/${viewState.active?.sleepEpisodeId ?? ''}`} state={viewState} action={action} blocked={blocked} makeReport={makeReport} /> : null}
+          {tab === 'reports' ? <ReportsPanel key={`${viewState.active?.id ?? 'unselected'}/${viewState.active?.sleepEpisodeId ?? ''}`} state={viewState} action={action} blocked={blocked} makeReport={makeReport} onContinue={() => setTab('chat')} onReview={() => setTab('data')} /> : null}
         </div>
       </main>
     </>}
@@ -296,6 +299,36 @@ function AssistantMessage() { return <MessagePrimitive.Root className="message a
 const messageComponents = { UserMessage, AssistantMessage };
 const convertMessage = (message: ChatMessage) => ({ id: message.id, role: message.role, content: [{ type: 'text' as const, text: message.text }] });
 
+const modelFailureCodes = new Set(['AUTH_FAILED', 'QUOTA', 'TIMEOUT', 'TURN_LIMIT', 'REQUEST_FAILED', 'MODEL_NOT_FOUND']);
+export function ModelConnectionButton({ state, blocked, onConnect }: { state: AppSnapshot; blocked: boolean; onConnect: () => void }) {
+  const { t } = useTranslation();
+  const failed = state.configured && Boolean(state.notice && modelFailureCodes.has(state.notice.code));
+  const title = failed ? `${t('modelConnectionWarning')} ${t(errorKey(state.notice!.code))}` : t('settings');
+  return <button className="model-button" onClick={onConnect} disabled={blocked} title={title} aria-label={state.model?.model ? `${title}: ${state.model.model}` : title}>
+    <span className={`status-dot ${failed ? 'warning' : state.configured ? 'connected' : ''}`} /><span>{state.model?.model || t('connectModel')}</span>
+  </button>;
+}
+
+export function RecoveryNotice({ state, action, blocked, makeReport, onContinue, onConnect }: { state: AppSnapshot; action: Action; blocked: boolean; makeReport: MakeReport; onContinue?: () => void; onConnect?: () => void }) {
+  const { t } = useTranslation();
+  if (!state.active || (!state.notice && !state.localCollection)) return null;
+  const notice = state.notice;
+  const followup = notice?.kind === 'followup-failed';
+  return <section className="recovery-notice" role="status" aria-live="polite">
+    <div className="recovery-notice-copy"><strong>{t(followup ? 'answerSavedFollowupFailed' : notice?.kind === 'report-saved' ? 'reportSavedInterrupted' : notice ? 'localReportReady' : 'localCollectionTitle')}</strong>
+      <p className="small">{t(followup ? 'answerSavedFollowupHint' : notice?.kind === 'report-saved' ? 'reportSavedInterruptedHint' : notice ? 'localReportReadyHint' : 'localCollectionHint')}</p>
+      {notice ? <p className="small muted">{t('modelFailureReason', { reason: t(errorKey(notice.code)) })}</p> : null}
+      {notice && state.localCollection ? <p className="small muted">{t('localCollectionHint')}</p> : null}
+    </div>
+    <div className="recovery-notice-actions">{followup ? <>
+      <button type="button" className="secondary-button" disabled={blocked || !state.configured} onClick={() => void action('retryFollowup')}>{t('retryFollowup')}</button>
+      <button type="button" className="secondary-button" disabled={blocked} onClick={async () => { if (await action('continueLocal')) onContinue?.(); }}>{t('continueLocal')}</button>
+    </> : null}{state.localCollection ? <button type="button" className="secondary-button" disabled={blocked || !state.configured} onClick={() => void action('continueWithModel')}>{t('continueWithModel')}</button> : null}
+      {!state.configured && onConnect ? <button type="button" className="text-button" disabled={blocked} onClick={onConnect}>{t('connectModel')}</button> : null}
+      <button type="button" className="text-button" disabled={blocked} onClick={() => void makeReport(true)}>{t('createLocalReport')}</button></div>
+  </section>;
+}
+
 export function ConversationEmpty({ state, blocked, onOpenData, onOpenReports, importFile }: { state: AppSnapshot; blocked: boolean; onOpenData: () => void; onOpenReports: () => void; importFile: () => Promise<void> }) {
   const { t } = useTranslation();
   const report = orderedReports(reportsForEpisode(state.reports, state.active), state.active?.id)[0];
@@ -310,7 +343,7 @@ export function ConversationEmpty({ state, blocked, onOpenData, onOpenReports, i
   </section>;
 }
 
-function ChatPanel({ state, delta, action, importFile, makeReport, blocked, onConnect, onOpenData, onOpenReports }: { state: AppSnapshot; delta: string; action: Action; importFile: () => Promise<void>; makeReport: () => Promise<void>; blocked: boolean; onConnect: () => void; onOpenData: () => void; onOpenReports: () => void }) {
+export function ChatPanel({ state, delta, action, importFile, makeReport, blocked, onConnect, onOpenData, onOpenReports }: { state: AppSnapshot; delta: string; action: Action; importFile: () => Promise<void>; makeReport: MakeReport; blocked: boolean; onConnect: () => void; onOpenData: () => void; onOpenReports: () => void }) {
   const { t } = useTranslation();
   const messages = useMemo(() => visibleMessages(state.messages, delta, state.active?.id), [state.messages, delta, state.active?.id]);
   const onNew = useCallback(async (message: AppendMessage) => {
@@ -321,12 +354,13 @@ function ChatPanel({ state, delta, action, importFile, makeReport, blocked, onCo
   const runtime = useExternalStoreRuntime({ messages, convertMessage, isRunning: state.busy, onNew, onCancel });
   const empty = !messages.length && !state.question;
   return <AssistantRuntimeProvider runtime={runtime}><ThreadPrimitive.Root className="thread">
-    <div className="conversation-heading"><div><p className="eyebrow"><Icon name="moon" />{t(state.active?.scope || 'main')}</p><h1>{state.active?.goal}</h1></div><button className="text-button report-button" onClick={() => void makeReport()} disabled={blocked}>{t('createReport')}<Icon name="arrow" /></button></div>
+    <div className="conversation-heading"><div><p className="eyebrow"><Icon name="moon" />{t(state.active?.scope || 'main')}</p><h1>{state.active?.goal}</h1></div><div className="conversation-report-actions"><button className="text-button report-button" onClick={() => void makeReport()} disabled={blocked}>{t('createReport')}<Icon name="arrow" /></button><button className="text-button" onClick={() => void makeReport(true)} disabled={blocked}>{t('createLocalReport')}</button></div></div>
     <ThreadPrimitive.Viewport className={`thread-viewport${empty ? ' thread-viewport-empty' : ''}`}>
       {empty ? <ConversationEmpty state={state} blocked={blocked} onOpenData={onOpenData} onOpenReports={onOpenReports} importFile={importFile} /> : null}
       {!messages.length && state.question ? <div className="question-presence"><Owl /><span>{t('appSubtitle')}</span></div> : null}
       <ThreadPrimitive.Messages components={messageComponents} />
       {state.question ? <QuestionCard key={state.question.id} state={state} action={action} blocked={blocked} makeReport={makeReport} /> : null}
+      <CollectionContinuation state={state} action={action} blocked={blocked} onReview={onOpenData} />
     </ThreadPrimitive.Viewport>
     <div className="composer-area">
       {state.configured ? <ComposerPrimitive.Root className="composer"><ComposerPrimitive.Input className="composer-input" placeholder={t('composer')} aria-label={t('composer')} disabled={blocked && !state.busy} />
@@ -338,7 +372,17 @@ function ChatPanel({ state, delta, action, importFile, makeReport, blocked, onCo
   </ThreadPrimitive.Root></AssistantRuntimeProvider>;
 }
 
-function QuestionCard({ state, action, blocked, makeReport }: { state: AppSnapshot; action: Action; blocked: boolean; makeReport: () => Promise<void> }) {
+function CollectionContinuation({ state, action, blocked, onContinue, onReview }: { state: AppSnapshot; action: Action; blocked: boolean; onContinue?: () => void; onReview?: () => void }) {
+  const { t } = useTranslation();
+  if (!state.active || state.question || state.canResume === undefined) return null;
+  return <section className="collection-continuation" aria-label={t(state.canResume ? 'resumeQuestions' : 'questionsComplete')}>
+    <p className="small muted">{t(state.canResume ? 'resumeQuestionsHint' : 'questionsCompleteHint')}</p>
+    {state.canResume ? <button className="secondary-button" disabled={blocked} onClick={async () => { if (await action('resume')) onContinue?.(); }}>{t('resumeQuestions')}<Icon name="arrow" /></button>
+      : onReview ? <button className="text-button" disabled={blocked} onClick={onReview}>{t('reviewFacts')}<Icon name="arrow" /></button> : null}
+  </section>;
+}
+
+export function QuestionCard({ state, action, blocked, makeReport }: { state: AppSnapshot; action: Action; blocked: boolean; makeReport: MakeReport }) {
   const { t } = useTranslation();
   const [answer, setAnswer] = useState('');
   const question = state.question;
@@ -346,8 +390,9 @@ function QuestionCard({ state, action, blocked, makeReport }: { state: AppSnapsh
   const numeric = question.topic === 'sleep_duration_hours' || question.topic === 'remembered_awakenings';
   return <section className="question-card" aria-labelledby="question-title"><p className="section-label">{t('question')}</p><h2 id="question-title">{question.text}</h2>
     {question.reason ? <p className="question-reason"><span>{t('questionReason')} · </span>{question.reason}</p> : null}
-    <form onSubmit={async (event) => { event.preventDefault(); if (await action('answer', { value: numeric ? Number(answer) : answer })) setAnswer(''); }}>
-      <label className="sr-only" htmlFor="question-answer">{t('answer')}</label>{numeric ? <input id="question-answer" type="number" inputMode="decimal" min={0} step={question.topic === 'remembered_awakenings' ? 1 : 'any'} value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder={question.topic === 'sleep_duration_hours' ? t('hoursPlaceholder') : t('countPlaceholder')} disabled={blocked} required /> : <textarea id="question-answer" value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder={t('answerPlaceholder')} rows={2} disabled={blocked} maxLength={6000} />}
+    <form onSubmit={async (event) => { event.preventDefault(); if (blocked || !answer.trim()) return; if (await action('answer', { value: answer })) setAnswer(''); }}>
+      <label className="sr-only" htmlFor="question-answer">{t('answer')}</label>{numeric ? <input id="question-answer" type="text" value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder={question.topic === 'sleep_duration_hours' ? t('hoursPlaceholder') : t('countPlaceholder')} aria-describedby="numeric-answer-hint" disabled={blocked} maxLength={6000} required /> : <textarea id="question-answer" value={answer} onChange={(event) => setAnswer(event.target.value)} placeholder={t('answerPlaceholder')} rows={2} disabled={blocked} maxLength={6000} />}
+      {numeric ? <p className="small muted numeric-answer-hint" id="numeric-answer-hint">{t('numericAnswerHint')}</p> : null}
       <div className="question-actions"><button className="primary-button" type="submit" disabled={blocked || !answer.trim()}>{t('continue')} →</button><button className="text-button" type="button" onClick={() => void action('answer', { skip: true })} disabled={blocked}>{t('skip')}</button></div>
     </form><button className="text-button report-shortcut" onClick={() => void makeReport()} disabled={blocked}>{t('reportNow')} ↗</button>
   </section>;
@@ -391,25 +436,35 @@ export function ManualTargetForm({ state, action, blocked }: { state: AppSnapsho
   </details>;
 }
 
-function FactRow({ fact, action, blocked }: { fact: Fact; action: Action; blocked: boolean }) {
+export function FactEditor({ fact, action, blocked, onDone }: { fact: Fact; action: Action; blocked: boolean; onDone: () => void }) {
   const { t } = useTranslation();
+  const [value, setValue] = useState(fact.uncertainty?.original || String(fact.value ?? ''));
+  return <form className="fact-edit" onSubmit={async (event) => {
+    event.preventDefault();
+    if (blocked || !value.trim()) return;
+    if (await action('fact', { topic: fact.topic, value, scope: fact.scope })) onDone();
+  }}><label className="sr-only" htmlFor={`fact-${fact.id}`}>{t('factValue')}</label><input id={`fact-${fact.id}`} type="text" value={value} onChange={(event) => setValue(event.target.value)} disabled={blocked} autoFocus maxLength={6000} required /><button className="secondary-button" type="submit" disabled={blocked || !value.trim()}>{t('save')}</button><button className="text-button" type="button" disabled={blocked} onClick={onDone}>{t('cancel')}</button><p className="small muted fact-edit-hint">{t('numericAnswerHint')}</p></form>;
+}
+
+export function FactRow({ fact, action, blocked }: { fact: Fact; action: Action; blocked: boolean }) {
+  const { t, i18n } = useTranslation();
   const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState(String(fact.value ?? ''));
-  return <article className="fact-row"><div className="fact-description"><span className="badge">{t(fact.scope === 'profile' ? 'profile' : 'thisSleep')}</span><strong>{t(fact.topic, { defaultValue: fact.topic.replaceAll('_', ' ') })}</strong></div>
-    {editing ? <form className="fact-edit" onSubmit={async (event) => { event.preventDefault(); const updated = typeof fact.value === 'number' ? Number(value) : value; if (await action('fact', { topic: fact.topic, value: updated, scope: fact.scope, status: 'known' })) setEditing(false); }}><label className="sr-only" htmlFor={`fact-${fact.id}`}>{t('factValue')}</label><input id={`fact-${fact.id}`} type={typeof fact.value === 'number' ? 'number' : 'text'} min={typeof fact.value === 'number' ? 0 : undefined} step="any" value={value} onChange={(event) => setValue(event.target.value)} disabled={blocked} autoFocus required /><button className="secondary-button" type="submit" disabled={blocked}>{t('save')}</button><button className="text-button" type="button" onClick={() => setEditing(false)}>{t('cancel')}</button></form>
-      : <div className="fact-answer"><span>{fact.status === 'unknown' ? t('unknown') : String(fact.value ?? '—')}</span><div className="fact-controls"><button className="text-button" onClick={() => setEditing(true)} disabled={blocked}>{t('edit')}</button><button className="text-button danger" disabled={blocked} onClick={() => { if (window.confirm(t('deleteFactConfirm'))) void action('deleteFact', { id: fact.id }); }}>{t('deleteFact')}</button></div></div>}
+  return <article className="fact-row"><div className="fact-description"><span className="badge">{t(fact.scope === 'profile' ? 'profile' : 'thisSleep')}</span><strong>{factTopicLabel(fact.topic, i18n.language === 'en' ? 'en' : 'zh')}</strong></div>
+    {editing ? <FactEditor fact={fact} action={action} blocked={blocked} onDone={() => setEditing(false)} />
+      : <div className="fact-answer"><span>{factDisplayValue(fact, t('unknown'))}{fact.uncertainty ? <small className="fact-uncertainty">{t(`uncertainty_${fact.uncertainty.kind}`)}</small> : null}</span><div className="fact-controls"><button className="text-button" onClick={() => setEditing(true)} disabled={blocked}>{t('edit')}</button><button className="text-button danger" disabled={blocked} onClick={() => { if (window.confirm(t('deleteFactConfirm'))) void action('deleteFact', { id: fact.id }); }}>{t('deleteFact')}</button></div></div>}
   </article>;
 }
 
-export function ReportsPanel({ state, action, blocked, makeReport }: { state: AppSnapshot; action: Action; blocked: boolean; makeReport: () => Promise<void> }) {
+export function ReportsPanel({ state, action, blocked, makeReport, onContinue, onReview }: { state: AppSnapshot; action: Action; blocked: boolean; makeReport: MakeReport; onContinue?: () => void; onReview?: () => void }) {
   const { t } = useTranslation();
   const reports = orderedReports(reportsForEpisode(state.reports, state.active), state.active?.id);
   const [selected, setSelected] = useState<string>();
   const report = reports.find((item) => item.id === selected) || reports[0];
   return <section className={`page-body reports-page ${report ? 'reports-page-populated' : ''}`}><div className={report ? 'report-toolbar' : 'page-heading'}>{report ? <h1 className="sr-only">{t('reports')}</h1> : <div><p className="eyebrow">{t('reportEyebrow')}</p><h1>{t('reportsTitle')}</h1><p className="muted">{t('reportsIntro')}</p></div>}
       {reports.length > 1 ? <div className="report-picker"><label className="sr-only" htmlFor="report-picker">{t('reports')}</label><select id="report-picker" value={report?.id} onChange={(event) => setSelected(event.target.value)}>{reports.map((item) => <option key={item.id} value={item.id}>{t('revision')} {item.revision} · {formatDate(item.createdAt, state.language)}{item.status === 'stale' ? ` · ${t('stale')}` : ''}</option>)}</select></div> : null}
-      <div className={report ? 'report-toolbar-actions' : 'stack-actions'}><button className={report ? 'secondary-button' : 'primary-button'} disabled={blocked || !state.active} onClick={() => { setSelected(undefined); void makeReport(); }}>{t('createReport')}</button><button className="text-button" onClick={() => void action('openReports')}>{t('openFolder')} ↗</button></div></div>
+      <div className={report ? 'report-toolbar-actions' : 'stack-actions'}><button className={report ? 'secondary-button' : 'primary-button'} disabled={blocked || !state.active} onClick={() => { setSelected(undefined); void makeReport(); }}>{t('createReport')}</button><button className="text-button" disabled={blocked || !state.active} onClick={() => { setSelected(undefined); void makeReport(true); }}>{t('createLocalReport')}</button><button className="text-button" onClick={() => void action('openReports')}>{t('openFolder')} ↗</button></div></div>
     <p className="small muted report-history-hint">{t('reportHistoryHint')}</p>
+    <CollectionContinuation state={state} action={action} blocked={blocked} onContinue={onContinue} onReview={onReview} />
     {!reports.length ? <div className="empty-panel"><Owl />{state.active ? <><p className="small muted">{t('currentAnalysis')}</p><h2>{state.active.goal}</h2><p className="muted">{t('noReports')}</p></> : <p className="muted">{t('noActiveReport')}</p>}</div> : null}
     {report ? <ReportView key={report.id} report={report} investigationGoal={state.active?.goal} language={state.language} action={action} blocked={blocked} hasFeedback={state.feedback.some((item) => item.reportId === report.id)} /> : null}
   </section>;
@@ -420,6 +475,14 @@ function MetricTable({ metrics, language, label }: { metrics: Metric[]; language
   return <div className="metrics-table" role="table" aria-label={label}>{metrics.map((metric) => <div className="metric-row" role="row" key={metric.key}><div role="cell"><strong>{t(metric.key, { defaultValue: metric.key.replaceAll('_', ' ') })}</strong><small>{t(metric.source)}{metric.note ? ` · ${localizedRecordText(metric.note, language)}` : ''}</small></div><span role="cell">{displayNumber(metric.value)} <small>{metric.unit}</small></span></div>)}</div>;
 }
 
+export function ReportedFacts({ facts, language }: { facts?: Fact[]; language: Language }) {
+  const { t } = useTranslation();
+  if (facts === undefined) return null;
+  return <section className="report-section reported-facts"><h3>{t('reportedFacts')}</h3><p className="small muted">{t('reportedFactsHint')}</p>
+    {facts.length ? <dl>{facts.map(fact => <div key={fact.id}><dt>{factTopicLabel(fact.topic, language)}<span className="small muted">{t(fact.scope === 'profile' ? 'profile' : 'thisSleep')}</span></dt><dd>{factDisplayValue(fact, t('unknown'))}{fact.uncertainty ? <small className="fact-uncertainty">{t(`uncertainty_${fact.uncertainty.kind}`)}</small> : null}</dd></div>)}</dl> : <p className="small muted">{t('noReportedFacts')}</p>}
+  </section>;
+}
+
 export function ReportView({ report, investigationGoal, language, action, blocked, hasFeedback }: { report: Report; investigationGoal?: string; language: Language; action: Action; blocked: boolean; hasFeedback: boolean }) {
   const { t } = useTranslation();
   const [note, setNote] = useState('');
@@ -428,6 +491,7 @@ export function ReportView({ report, investigationGoal, language, action, blocke
   return <article className="report-document"><header className="report-header"><div>{investigationGoal ? <p className="report-owner"><span>{t('currentAnalysis')}</span><strong>{investigationGoal}</strong></p> : null}<h2>{report.title}</h2><p className="report-meta">{t('revision')} {report.revision} · {formatReportTime(report.createdAt, language)}{report.basis ? <> · {t(report.basis.scope)} · {t('source')}：{report.basis.source || t('self-report')}</> : null}</p><p className="report-sleep-window"><span>{t('reportSleepWindow')}</span>{report.basis?.start && report.basis.end ? <><time dateTime={report.basis.start}>{formatReportTime(report.basis.start, language)}</time> — <time dateTime={report.basis.end}>{formatReportTime(report.basis.end, language)}</time></> : t('reportUnknownWindow')}</p></div>{report.status === 'stale' ? <span className="badge warning">{t('stale')}</span> : null}</header>
     <section className={`report-summary ${report.score === null ? 'report-summary-unscored' : ''}`}>{report.score !== null ? <div className="report-score"><span className="small muted">{t('score')}</span><strong>{displayNumber(report.score)}</strong><span className="small muted">/ 100 · {report.scoreVersion}</span></div> : null}<div><p className="section-label">{t('summary')}</p><p>{report.summary}</p>{report.score === null ? <p className="small muted score-note">{t(report.scoreVersion === 'unscored-v1' ? 'unvalidatedScore' : 'noScore')}</p> : null}</div></section>
     {report.aiInterpretation ? <section className="report-section report-ai"><h3>{t('ai')}</h3><p className="preserve-lines">{report.aiInterpretation}</p><p className="small muted">{t('disclaimer')}</p></section> : <p className="small muted ai-pending">{t('aiPending')}</p>}
+    <ReportedFacts facts={report.reportedFacts} language={language} />
     <section className="report-section action-section"><p className="section-label">{t('tonight')}</p><h3>{report.action}</h3><details className="action-feedback"><summary>{t('feedback')}</summary><label className="sr-only" htmlFor="feedback-note">{t('feedbackNote')}</label><textarea id="feedback-note" rows={2} value={note} onChange={(event) => setNote(event.target.value)} placeholder={t('feedbackNote')} maxLength={2000} disabled={blocked} /><div className="feedback-buttons">{(['accepted', 'cannot', 'unhelpful', 'later'] as const).map((choice) => <button className="secondary-button" key={choice} disabled={blocked} onClick={() => void action('feedback', { reportId: report.id, choice, note })}>{t(choice)}</button>)}</div></details>{hasFeedback ? <p className="small success" role="status">{t('feedbackSaved')}</p> : null}</section>
     {report.basis ? <details className="report-section report-basis"><summary>{t('reportBasis')} <span className="small muted">{t('expand')}</span></summary><dl><div><dt>{t('scope')}</dt><dd>{t(report.basis.scope || 'main')}</dd></div><div><dt>{t('source')}</dt><dd>{report.basis.source || t('self-report')}</dd></div><div><dt>{t('startTime')}</dt><dd><time dateTime={report.basis.start}>{formatDate(report.basis.start, language)}</time></dd></div><div><dt>{t('endTime')}</dt><dd><time dateTime={report.basis.end}>{formatDate(report.basis.end, language)}</time></dd></div></dl></details> : null}
     <section className="report-section"><h3>{t('metrics')}</h3>{availableMetrics.length ? <MetricTable metrics={availableMetrics} language={language} label={t('metrics')} /> : <p className="small muted">{t('noMetrics')}</p>}
