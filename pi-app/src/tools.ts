@@ -5,6 +5,7 @@ import { SleepStore } from './domain/index.js';
 import { buildInvestigationGuidance } from './domain/investigation.js';
 import { analyzeRecords } from './health/index.js';
 import { analyzeHealthEvidence, parseZonedTimestamp } from './health/evidence.js';
+import { reportsForEpisode } from './shared/episode.js';
 
 const text = (maxLength = 4000) => Type.String({ minLength: 1, maxLength });
 const scope = Type.Union([Type.Literal('profile'), Type.Literal('sleep')]);
@@ -22,7 +23,7 @@ export interface SleepTool {
 }
 
 /** One deterministic interface, used by Pi, CLI and MCP. No model or credentials. */
-export function createSleepTools(store: SleepStore, options: { investigationId?: () => string; onChange?: () => void } = {}): SleepTool[] {
+export function createSleepTools(store: SleepStore, options: { investigationId?: () => string; episodeId?: string; onChange?: () => void } = {}): SleepTool[] {
   function tool<P extends TProperties>(name: string, label: string, description: string, fields: P, readOnly: boolean,
     execute: (params: Static<TObject<P>>, id: string, signal?: AbortSignal) => unknown | Promise<unknown>, scoped = true): SleepTool {
     const parameters = Type.Object({ ...fields, ...(scoped && !options.investigationId ? { investigationId: text(100) } : {}) }, { additionalProperties: false });
@@ -31,7 +32,10 @@ export function createSleepTools(store: SleepStore, options: { investigationId?:
       if (signal?.aborted) throw new Error('CANCELLED');
       const params = raw as Static<TObject<P>> & { investigationId?: string };
       const id = scoped ? options.investigationId?.() ?? params.investigationId! : '';
-      if (scoped) store.getInvestigation(id);
+      if (scoped) {
+        const investigation = store.getInvestigation(id);
+        if (options.episodeId !== undefined && options.episodeId !== (investigation.sleepEpisodeId ?? investigation.id)) throw new Error('EPISODE_CHANGED');
+      }
       const result = await execute(params, id, signal);
       if (!readOnly) options.onChange?.();
       return result;
@@ -45,7 +49,7 @@ export function createSleepTools(store: SleepStore, options: { investigationId?:
     return { start, end, source: active.source };
   }
   const tools = [
-    tool('sleep_context', 'Sleep context', 'Read current facts, pending question, uncertainty and plan status. Corrected facts supersede chat history. Without investigationId, list investigations for explicit selection.',
+    tool('sleep_context', 'Sleep context', 'Read current episode facts, pending question, uncertainty and plan status. Corrected facts and the selected sleepEpisodeId supersede chat history. Never restore another episode\'s statements. Without investigationId, list investigations for explicit selection.',
       options.investigationId ? {} : { investigationId: Type.Optional(text(100)) }, true, params => sleepContext(store, options.investigationId?.() ?? (params as { investigationId?: string }).investigationId), false),
     tool('sleep_fact', 'Save a fact', 'Save only user-supplied facts. Preserve approximate/range/uncertain wording with uncertainty metadata; never convert a range to its midpoint. A correction replaces the previous fact. Separate profile habits from this sleep.', {
       topic: text(101), value: Type.Union([Type.String({ maxLength: 20000 }), Type.Number(), Type.Boolean(), Type.Null()]), scope,
@@ -55,7 +59,7 @@ export function createSleepTools(store: SleepStore, options: { investigationId?:
     tool('sleep_question', 'One follow-up', 'Persist one useful next question before asking it, with a short reason. Do not ask for already known information or block a direct report.', {
       topic: text(101), text: text(), reason: Type.Optional(text()), scope,
     }, false, (params, id) => store.saveQuestion(id, { id: randomUUID(), ...params })),
-    tool('sleep_target', 'Select sleep', 'Set episode and source only after the user explicitly selects or unambiguously identifies them. Time strings must include a timezone. Never silently select the newest episode.', {
+    tool('sleep_target', 'Select sleep', 'Set episode and source only after the user explicitly selects or unambiguously identifies them. Time strings must include a timezone. Never silently select the newest episode. When sleepEpisodeId changes, read sleep_context again and use only its current facts; another episode\'s statements need explicit user confirmation.', {
       start: text(80), end: text(80), source: text(500), scope: Type.Optional(sleepScope),
     }, false, (params, id) => {
       requireZonedTimes(params.start, params.end);
@@ -117,23 +121,31 @@ export function sleepContext(store: SleepStore, investigationId?: string): unkno
   if (investigationId) store.getInvestigation(investigationId);
   const snapshot = store.snapshot(investigationId);
   const imports = snapshot.imports.slice(-25).map(({ id, recordCount, sources, start, end, warnings }) => ({ id, recordCount, sources, start, end, warnings }));
-  const base = { investigations: snapshot.investigations.slice(0, 25).map(({ id, goal, language, scope, revision, status }) => ({ id, goal, language, scope, revision, status })), candidates: snapshot.candidates.slice(0, 25), imports };
+  // A discovery list must not feed other investigations' symptom-containing
+  // goals into the current episode. Dates and IDs still permit explicit selection.
+  const base = { investigations: snapshot.investigations.slice(0, 25).map(({ id, language, scope, revision, status, sleepEpisodeId, start, end, source }) => ({ id, language, scope, revision, status, sleepEpisodeId: sleepEpisodeId ?? id, start, end, source })), candidates: snapshot.candidates.slice(0, 25), imports };
   if (!investigationId) return { ...base, nextAction: 'Choose an investigation explicitly or use sleep_create. No latest investigation is selected implicitly.' };
   const active = snapshot.active!;
-  const reports = snapshot.reports.filter(report => report.investigationId === investigationId);
+  const episodeId = active.sleepEpisodeId ?? active.id;
+  const reports = reportsForEpisode(snapshot.reports, active);
   const ids = new Set(reports.map(report => report.id));
-  return { ...base, language: active.language, investigation: active, facts: snapshot.facts, pendingQuestion: snapshot.question,
+  const { id, language, scope, createdAt, revision, start, end, source, pendingQuestion, plan, status } = active;
+  const investigation = { id, language, scope, createdAt, revision, start, end, source, pendingQuestion, plan, status, sleepEpisodeId: episodeId,
+    goal: episodeId === id ? active.goal : language === 'zh' ? '分析当前选择的睡眠；原调查目标中与其他睡眠相关的自述需要重新确认。' : 'Analyze the selected sleep. Statements in the original investigation goal about another sleep require confirmation.' };
+  return { ...base, language: active.language, investigation, facts: snapshot.facts, pendingQuestion: snapshot.question,
+    episodeNotice: 'Only the current sleepEpisodeId facts describe this sleep. Profile facts may apply across sleeps. Do not restore historical single-sleep statements from chat, goals, plans or feedback.',
     guidance: buildInvestigationGuidance(active, snapshot.facts),
     feedback: snapshot.feedback.filter(item => ids.has(item.reportId)).slice(-15),
     reports: reports.slice(0, 1).map(report => report.status === 'stale' ? { id: report.id, status: report.status } : { id: report.id, status: report.status, metrics: report.metrics, action: report.action }),
   };
 }
 
-const SAFE_CODES = new Set(['INVALID_TOOL_ARGUMENTS', 'UNKNOWN_TOOL', 'CANCELLED', 'BUSY', 'TARGET_REQUIRED', 'TIMEZONE_REQUIRED', 'INVALID_QUERY_RANGE', 'PLAN_STALE', 'INVALID_PLAN', 'INVALID_FACT_UNCERTAINTY', 'INVALID_FACT', 'INVALID_FACT_STATUS', 'INVALID_FACT_VALUE', 'FACT_TOO_LONG', 'INVESTIGATION_NOT_FOUND', 'INVALID_GOAL', 'INVALID_INVESTIGATION', 'INVALID_QUESTION', 'INVALID_TARGET', 'INVALID_SCOPE', 'INVALID_TIME_RANGE', 'INVALID_DATE', 'QUERY_TOO_LARGE_NARROW_TIME_RANGE', 'REPORT_NOT_FOUND', 'INVALID_FEEDBACK', 'REPORT_TEXT_TOO_LONG', 'IMPORT_CANCELLED', 'IMPORT_IN_PROGRESS']);
+const SAFE_CODES = new Set(['INVALID_TOOL_ARGUMENTS', 'UNKNOWN_TOOL', 'CANCELLED', 'BUSY', 'EPISODE_CHANGED', 'TARGET_REQUIRED', 'TIMEZONE_REQUIRED', 'INVALID_QUERY_RANGE', 'PLAN_STALE', 'INVALID_PLAN', 'INVALID_FACT_UNCERTAINTY', 'INVALID_FACT', 'INVALID_FACT_STATUS', 'INVALID_FACT_VALUE', 'FACT_TOO_LONG', 'INVESTIGATION_NOT_FOUND', 'INVALID_GOAL', 'INVALID_INVESTIGATION', 'INVALID_QUESTION', 'INVALID_TARGET', 'INVALID_SCOPE', 'INVALID_TIME_RANGE', 'INVALID_DATE', 'QUERY_TOO_LARGE_NARROW_TIME_RANGE', 'REPORT_NOT_FOUND', 'INVALID_FEEDBACK', 'REPORT_TEXT_TOO_LONG', 'IMPORT_CANCELLED', 'IMPORT_IN_PROGRESS']);
 export function safeToolError(error: unknown) {
   const message = error instanceof Error && error.name === 'AbortError' ? 'CANCELLED' : error instanceof Error ? error.message : '';
   const code = SAFE_CODES.has(message) ? message : 'TOOL_FAILED';
   const hints: Record<string, string> = {
+    EPISODE_CHANGED: 'The selected sleep changed. Start a fresh episode session and read sleep_context before continuing; never write facts from the previous episode.',
     PLAN_STALE: 'Read sleep_context and refresh the plan using its current revision.',
     TARGET_REQUIRED: 'Ask one question to select the episode and source; a self-report report is still available.',
     TIMEZONE_REQUIRED: 'Confirm the calendar date and timezone; do not guess from a vague local time.',

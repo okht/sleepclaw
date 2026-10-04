@@ -175,7 +175,7 @@ test('busy welcome disables all actions while connected users do not see an offl
 });
 
 const emptyConversationState: AppSnapshot = { ...state, active: { id: 'current', goal: 'Synthetic sleep', language: 'zh', scope: 'main', createdAt: '2026-09-21', revision: 3, status: 'reported' } };
-const emptyConversationReport: Report = { id: 'report', investigationId: 'current', revision: 1, factRevision: 3, language: 'zh', createdAt: '2026-09-21', title: 'Synthetic report', summary: 'Synthetic summary', metrics: [], dimensions: [], score: null, scoreVersion: 'unscored-v1', limitations: [], action: '', status: 'complete', markdown: '' };
+const emptyConversationReport: Report = { id: 'report', investigationId: 'current', revision: 1, factRevision: 3, language: 'zh', createdAt: '2026-09-21', title: 'Synthetic report', summary: 'Synthetic summary', metrics: [], dimensions: [], score: null, scoreVersion: 'unscored-v1', limitations: [], action: '', status: 'complete', markdown: '', basis: { scope: 'main' } };
 const renderEmptyConversation = (overrides: Partial<AppSnapshot>) => renderToStaticMarkup(createElement(I18nextProvider, { i18n }, createElement(ConversationEmpty, {
   state: { ...emptyConversationState, ...overrides }, blocked: overrides.busy ?? false, onOpenData: () => {}, onOpenReports: () => {}, importFile: async () => {},
 })));

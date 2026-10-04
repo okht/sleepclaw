@@ -7,6 +7,7 @@ import type { Analysis, DomainSnapshot, Fact, FactInput, FactValue, Feedback, He
 import { questionDefinitions } from './questions.js';
 import { buildTimeline, renderReport, reportContent } from './report.js';
 import { inferFactUncertainty, validateFactUncertainty, validateInvestigationPlan } from './investigation.js';
+import { selectSleepEpisode, type SleepEpisode, type SleepTarget } from './sleep-episodes.js';
 
 type Row = Record<string, unknown>;
 type RecordQuery = { start?: string; end?: string; source?: string; type?: HealthRecord['type'] };
@@ -28,6 +29,8 @@ export class SleepStore {
     this.db = new DatabaseSync(join(this.home, 'sleepclaw.sqlite'));
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS investigations (id TEXT PRIMARY KEY, data TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS sleep_episodes (id TEXT PRIMARY KEY, investigation_id TEXT NOT NULL, data TEXT NOT NULL, FOREIGN KEY(investigation_id) REFERENCES investigations(id) ON DELETE CASCADE);
+      CREATE INDEX IF NOT EXISTS sleep_episode_investigation_idx ON sleep_episodes(investigation_id);
       CREATE TABLE IF NOT EXISTS facts (id TEXT PRIMARY KEY, owner TEXT NOT NULL, topic TEXT NOT NULL, data TEXT NOT NULL, UNIQUE(owner, topic));
       CREATE TABLE IF NOT EXISTS imports (id TEXT PRIMARY KEY, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS health_records (id TEXT PRIMARY KEY, type TEXT NOT NULL, source TEXT NOT NULL, start TEXT NOT NULL, end TEXT NOT NULL, data TEXT NOT NULL);
@@ -35,7 +38,16 @@ export class SleepStore {
       CREATE TABLE IF NOT EXISTS import_records (import_id TEXT NOT NULL, record_id TEXT NOT NULL, PRIMARY KEY(import_id, record_id), FOREIGN KEY(import_id) REFERENCES imports(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED, FOREIGN KEY(record_id) REFERENCES health_records(id));
       CREATE TABLE IF NOT EXISTS reports (id TEXT PRIMARY KEY, investigation_id TEXT NOT NULL, data TEXT NOT NULL, FOREIGN KEY(investigation_id) REFERENCES investigations(id) ON DELETE CASCADE);
       CREATE TABLE IF NOT EXISTS feedback (id INTEGER PRIMARY KEY AUTOINCREMENT, report_id TEXT NOT NULL, data TEXT NOT NULL, FOREIGN KEY(report_id) REFERENCES reports(id) ON DELETE CASCADE);
-      PRAGMA user_version=1;`);
+      PRAGMA user_version=2;`);
+    // Legacy facts remain owned by the investigation ID, which becomes its first
+    // episode ID. Historical attribution cannot be recovered from v1 data alone.
+    this.transaction(() => {
+      for (const investigation of this.rows<Investigation>('investigations')) if (!investigation.sleepEpisodeId) {
+        investigation.sleepEpisodeId = investigation.id;
+        this.saveEpisode({ id: investigation.id, investigationId: investigation.id, scope: investigation.scope, start: investigation.start, end: investigation.end });
+        this.saveInvestigation(investigation);
+      }
+    });
   }
 
   private writable(): void { if (this.importing) throw new Error('IMPORT_IN_PROGRESS'); }
@@ -56,7 +68,11 @@ export class SleepStore {
     this.db.prepare('INSERT INTO investigations (id,data) VALUES (?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data').run(value.id, JSON.stringify(value));
   }
   private factsFor(id: string): Fact[] {
-    return this.db.prepare("SELECT data FROM facts WHERE owner = 'profile' OR owner = ? ORDER BY rowid").all(id).map(row => parse<Fact>(row) as Fact);
+    const investigation = this.getInvestigation(id);
+    return this.db.prepare("SELECT data FROM facts WHERE owner = 'profile' OR owner = ? ORDER BY rowid").all(investigation.sleepEpisodeId ?? id).map(row => parse<Fact>(row) as Fact);
+  }
+  private saveEpisode(episode: SleepEpisode): void {
+    this.db.prepare('INSERT INTO sleep_episodes (id,investigation_id,data) VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data').run(episode.id, episode.investigationId, JSON.stringify(episode));
   }
   getInvestigation(id: string): Investigation {
     const value = parse<Investigation>(this.db.prepare('SELECT data FROM investigations WHERE id=?').get(id));
@@ -102,9 +118,13 @@ export class SleepStore {
     this.writable();
     if (!goal.trim() || goal.length > 10_000) throw new Error('INVALID_GOAL');
     if (!['zh', 'en'].includes(language) || !['main', 'nap', 'segment'].includes(scope)) throw new Error('INVALID_INVESTIGATION');
-    const investigation: Investigation = { id: randomUUID(), goal: goal.trim(), language, scope, createdAt: iso(), revision: 1, status: 'collecting' };
-    this.saveInvestigation(investigation);
-    this.nextQuestion(investigation.id);
+    const id = randomUUID();
+    const investigation: Investigation = { id, sleepEpisodeId: id, goal: goal.trim(), language, scope, createdAt: iso(), revision: 1, status: 'collecting' };
+    this.transaction(() => {
+      this.saveInvestigation(investigation);
+      this.saveEpisode({ id, investigationId: id, scope });
+      this.nextQuestion(id);
+    });
     return this.getInvestigation(investigation.id);
   }
 
@@ -131,9 +151,18 @@ export class SleepStore {
     if (target.scope && !['main', 'nap', 'segment'].includes(target.scope)) throw new Error('INVALID_SCOPE');
     this.transaction(() => {
       const investigation = this.getInvestigation(id);
-      Object.assign(investigation, { start: new Date(target.start).toISOString(), end: new Date(target.end).toISOString(), source: target.source, scope: target.scope ?? investigation.scope });
+      const normalized: SleepTarget = { start: new Date(target.start).toISOString(), end: new Date(target.end).toISOString(), source: target.source, scope: target.scope ?? investigation.scope };
+      if (investigation.start === normalized.start && investigation.end === normalized.end && investigation.source === normalized.source && investigation.scope === normalized.scope) return;
+      const episodes = this.db.prepare('SELECT data FROM sleep_episodes WHERE investigation_id=? ORDER BY rowid').all(id).map(row => parse<SleepEpisode>(row)!);
+      const episode = selectSleepEpisode(episodes, normalized) ?? { id: randomUUID(), investigationId: id, scope: normalized.scope };
+      if (!episode.start) { episode.start = normalized.start; episode.end = normalized.end; this.saveEpisode(episode); }
+      if (episode.id !== investigation.sleepEpisodeId) delete investigation.plan;
+      // Device/window-specific questions cannot follow the user to a different target.
+      delete investigation.pendingQuestion;
+      Object.assign(investigation, normalized, { sleepEpisodeId: episode.id });
       this.saveInvestigation(investigation);
       this.invalidate(id);
+      this.nextQuestion(id);
     });
     return this.getInvestigation(id);
   }
@@ -182,7 +211,7 @@ export class SleepStore {
 
   setFact(id: string, input: FactInput): Fact {
     this.writable();
-    this.getInvestigation(id);
+    const investigation = this.getInvestigation(id);
     if (!/^[a-zA-Z][a-zA-Z0-9_.-]{0,100}$/.test(input.topic) || !['profile', 'sleep'].includes(input.scope)) throw new Error('INVALID_FACT');
     if (input.status && !['known', 'unknown'].includes(input.status)) throw new Error('INVALID_FACT_STATUS');
     if (typeof input.value === 'number' && !Number.isFinite(input.value)) throw new Error('INVALID_FACT_VALUE');
@@ -192,9 +221,9 @@ export class SleepStore {
     const originalUnknown = status === 'unknown' && typeof input.value === 'string' && input.value.trim()
       ? { kind: 'uncertain' as const, original: input.value } : undefined;
     const uncertainty = validateFactUncertainty(input.uncertainty === undefined ? originalUnknown : input.uncertainty, input.value);
-    const owner = input.scope === 'profile' ? 'profile' : id;
+    const owner = input.scope === 'profile' ? 'profile' : investigation.sleepEpisodeId ?? id;
     const previous = parse<Fact>(this.db.prepare('SELECT data FROM facts WHERE owner=? AND topic=?').get(owner, input.topic));
-    const fact: Fact = { id: previous?.id ?? randomUUID(), topic: input.topic, value: status === 'unknown' ? null : input.value, status, scope: input.scope, ...(uncertainty ? { uncertainty } : {}), investigationId: input.scope === 'sleep' ? id : undefined, revision: (previous?.revision ?? 0) + 1, updatedAt: iso() };
+    const fact: Fact = { id: previous?.id ?? randomUUID(), topic: input.topic, value: status === 'unknown' ? null : input.value, status, scope: input.scope, ...(uncertainty ? { uncertainty } : {}), investigationId: input.scope === 'sleep' ? id : undefined, ...(input.scope === 'sleep' ? { sleepEpisodeId: owner } : {}), revision: (previous?.revision ?? 0) + 1, updatedAt: iso() };
     this.transaction(() => {
       this.db.prepare('INSERT OR REPLACE INTO facts (id,owner,topic,data) VALUES (?,?,?,?)').run(fact.id, owner, input.topic, JSON.stringify(fact));
       const affected = input.scope === 'profile' ? this.rows<Investigation>('investigations') : [this.getInvestigation(id)];
@@ -339,7 +368,7 @@ export class SleepStore {
     this.getInvestigation(id);
     this.transaction(() => {
       this.deleteLinkedReports([id]);
-      this.db.prepare('DELETE FROM facts WHERE owner=?').run(id);
+      this.db.prepare('DELETE FROM facts WHERE owner=? OR owner IN (SELECT id FROM sleep_episodes WHERE investigation_id=?)').run(id, id);
       this.db.prepare('DELETE FROM investigations WHERE id=?').run(id);
     });
   }

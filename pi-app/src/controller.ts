@@ -4,7 +4,7 @@ import { defineTool, SessionManager, type AgentSession } from '@earendil-works/p
 import { SleepStore } from './domain/index';
 import { createSleepTools, sleepContext } from './tools';
 import { makeSession, testConnection, validateModelConfig, chatMessages, publicError } from './agent';
-import type { AppSnapshot, AppEvent, ModelConfig, Language, FactValue, SleepScope, Feedback } from './shared/types';
+import type { AppSnapshot, AppEvent, ModelConfig, Language, FactValue, SleepScope, Feedback, Investigation } from './shared/types';
 
 const result = (value: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(value) }], details: {} });
 interface SavedSettings { language: Language; activeId?: string; model?: Omit<ModelConfig, 'apiKey'> }
@@ -14,6 +14,8 @@ export class SleepApp {
   private settings: SavedSettings = { language: 'zh' };
   private config?: ModelConfig;
   private session?: AgentSession;
+  private sessionInvestigationId?: string;
+  private sessionEpisodeId?: string;
   private busy = false;
   private aborter?: AbortController;
   private cancelRequested = false;
@@ -28,11 +30,20 @@ export class SleepApp {
     const file = join(this.home, 'settings.json'); writeFileSync(`${file}.tmp`, JSON.stringify(this.settings, null, 2)); renameSync(`${file}.tmp`, file);
   }
   setCredential(apiKey?: string): void { if (this.settings.model && apiKey) this.config = { ...this.settings.model, apiKey }; }
+  private sessionDir(investigation: Investigation): string {
+    const root = join(this.home, 'sessions', investigation.id);
+    return investigation.sleepEpisodeId && investigation.sleepEpisodeId !== investigation.id
+      ? join(root, 'episodes', investigation.sleepEpisodeId) : root;
+  }
+  private sessionMatches(investigation: Investigation): boolean {
+    return this.sessionInvestigationId === investigation.id && this.sessionEpisodeId === (investigation.sleepEpisodeId ?? investigation.id);
+  }
   snapshot(): AppSnapshot {
     const domain = this.store.snapshot(this.settings.activeId);
-    let messages = chatMessages(this.session);
-    if (!this.session && domain.active) {
-      const dir = join(this.home, 'sessions', domain.active.id);
+    const currentSession = domain.active && this.sessionMatches(domain.active) ? this.session : undefined;
+    let messages = chatMessages(currentSession);
+    if (!currentSession && domain.active) {
+      const dir = this.sessionDir(domain.active);
       if (existsSync(dir)) messages = chatMessages({ messages: SessionManager.continueRecent(join(this.home, 'workspace'), dir).buildSessionContext().messages } as AgentSession);
     }
     return { ...domain, language: this.settings.language, model: this.settings.model, configured: Boolean(this.config), messages, busy: this.busy };
@@ -42,40 +53,74 @@ export class SleepApp {
   private context(): unknown {
     return sleepContext(this.store, this.activeId());
   }
-  private tools() {
-    return createSleepTools(this.store, { investigationId: () => this.activeId(), onChange: () => this.publish() }).map(tool => defineTool({
+  private tools(investigationId: string, episodeId: string) {
+    return createSleepTools(this.store, { investigationId: () => investigationId, episodeId, onChange: () => this.publish() }).map(tool => defineTool({
       name: tool.name, label: tool.label, description: tool.description, parameters: tool.parameters,
-      execute: async (_id, params, signal) => result(await tool.execute(params, signal)),
+      execute: async (_id, params, signal) => {
+        const value = await tool.execute(params, signal);
+        const current = this.store.getInvestigation(investigationId);
+        if ((current.sleepEpisodeId ?? current.id) !== episodeId) void this.session?.abort();
+        return result(value);
+      },
     }));
   }
   private async getSession(): Promise<AgentSession> {
     if (!this.config) throw new Error('MODEL_REQUIRED');
-    if (!this.session) this.session = await makeSession(this.home, this.config, this.tools(), join(this.home, 'sessions', this.activeId()));
+    const investigation = this.store.getInvestigation(this.activeId());
+    if (this.session && !this.sessionMatches(investigation)) this.dropSession();
+    if (!this.session) {
+      const episodeId = investigation.sleepEpisodeId ?? investigation.id;
+      this.session = await makeSession(this.home, this.config, this.tools(investigation.id, episodeId), this.sessionDir(investigation));
+      this.sessionInvestigationId = investigation.id;
+      this.sessionEpisodeId = episodeId;
+    }
     return this.session;
   }
   private async prompt(text: string): Promise<void> {
-    const session = await this.getSession();
     let turns = 0;
-    const unsubscribe = session.subscribe(event => {
-      if (event.type === 'message_update' && event.assistantMessageEvent.type === 'text_delta') this.emit({ type: 'delta', text: event.assistantMessageEvent.delta });
-      if (event.type === 'tool_execution_start') this.emit({ type: 'progress', message: event.toolName });
-      if (event.type === 'tool_execution_end') this.publish();
-      if (event.type === 'turn_end' && ++turns >= 12) void session.abort();
-    });
     let timedOut = false;
-    const timeout = setTimeout(() => { timedOut = true; void session.abort(); }, 120_000);
+    const timeout = setTimeout(() => { timedOut = true; void this.session?.abort(); }, 120_000);
     try {
-      if (this.cancelRequested) throw new Error('CANCELLED');
-      const current = JSON.stringify(this.context());
-      await session.prompt(`${text}\n<sleepclaw-current-context>${current}</sleepclaw-current-context>`, { expandPromptTemplates: true });
-      if (timedOut) throw new Error('TIMEOUT');
-      if (this.cancelRequested) throw new Error('CANCELLED');
-      const last = session.messages.findLast(m => m.role === 'assistant');
-      if (last?.role === 'assistant' && last.stopReason === 'error') throw new Error(last.errorMessage ?? 'REQUEST_FAILED');
-      if (last?.role === 'assistant' && last.stopReason === 'aborted') throw new Error('CANCELLED');
-    } finally { clearTimeout(timeout); unsubscribe(); }
+      // Retargeting ends the old model context. Continue the same user request
+      // in the selected episode's session, with one shared timeout/turn budget.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (timedOut) throw new Error('TIMEOUT');
+        if (this.cancelRequested) throw new Error('CANCELLED');
+        const session = await this.getSession();
+        const investigationId = this.sessionInvestigationId!;
+        const episodeId = this.sessionEpisodeId!;
+        const episodeChanged = () => (this.store.getInvestigation(investigationId).sleepEpisodeId ?? investigationId) !== episodeId;
+        const unsubscribe = session.subscribe(event => {
+          if (event.type === 'message_update' && event.assistantMessageEvent.type === 'text_delta') this.emit({ type: 'delta', text: event.assistantMessageEvent.delta });
+          if (event.type === 'tool_execution_start') this.emit({ type: 'progress', message: event.toolName });
+          if (event.type === 'tool_execution_end') this.publish();
+          if (event.type === 'turn_end' && ++turns >= 12) void session.abort();
+        });
+        let promptError: unknown;
+        try {
+          if (timedOut) throw new Error('TIMEOUT');
+          if (this.cancelRequested) throw new Error('CANCELLED');
+          const current = this.context() as Record<string, unknown>;
+          const continuation = attempt ? { episodeContinuation: 'The selected sleep episode changed. Continue the original request using only this episode\'s current facts; historical statements about another sleep require the user to confirm their applicability. Do not change the selected episode again unless the request explicitly requires it.' } : {};
+          await session.prompt(`${text}\n<sleepclaw-current-context>${JSON.stringify({ ...current, ...continuation })}</sleepclaw-current-context>`, { expandPromptTemplates: true });
+        } catch (error) { promptError = error; }
+        finally { unsubscribe(); }
+        if (timedOut) throw new Error('TIMEOUT');
+        if (this.cancelRequested) throw new Error('CANCELLED');
+        if (episodeChanged()) {
+          this.dropSession();
+          if (attempt === 2 || turns >= 12) throw new Error('EPISODE_CHANGED');
+          continue;
+        }
+        if (promptError) throw promptError;
+        const last = session.messages.findLast(m => m.role === 'assistant');
+        if (last?.role === 'assistant' && last.stopReason === 'error') throw new Error(last.errorMessage ?? 'REQUEST_FAILED');
+        if (last?.role === 'assistant' && last.stopReason === 'aborted') throw new Error('CANCELLED');
+        return;
+      }
+    } finally { clearTimeout(timeout); }
   }
-  private dropSession(): void { this.session?.dispose(); this.session = undefined; }
+  private dropSession(): void { this.session?.dispose(); this.session = undefined; this.sessionInvestigationId = undefined; this.sessionEpisodeId = undefined; }
   private removeSessions(id?: string): void {
     const root = resolve(this.home, 'sessions'); const target = id ? resolve(root, id) : root;
     if (id && (!/^[a-f0-9-]{36}$/.test(id) || !target.startsWith(`${root}${sep}`))) throw new Error('INVALID_ID');
@@ -112,7 +157,11 @@ export class SleepApp {
           if (this.config) await this.getSession(); break;
         }
         case 'import': await this.store.importFile(String(p.path), { signal: this.aborter.signal, onProgress: count => this.emit({ type: 'progress', message: this.settings.language === 'zh' ? `已读取 ${count} 条记录` : `Read ${count} records` }) }); break;
-        case 'target': this.store.setTarget(this.activeId(), { start: String(p.start), end: String(p.end), source: String(p.source), scope: p.scope as SleepScope | undefined }); break;
+        case 'target': {
+          const investigation = this.store.setTarget(this.activeId(), { start: String(p.start), end: String(p.end), source: String(p.source), scope: p.scope as SleepScope | undefined });
+          if (this.session && !this.sessionMatches(investigation)) this.dropSession();
+          break;
+        }
         case 'answer': {
           const question = this.snapshot().question;
           this.store.answer(this.activeId(), (p.value ?? null) as FactValue, Boolean(p.skip));

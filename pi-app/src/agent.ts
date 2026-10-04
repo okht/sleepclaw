@@ -16,7 +16,7 @@ const PUBLIC_ERROR_CODES = new Set([
   'INVALID_FACT', 'INVALID_FEEDBACK', 'INVALID_GOAL', 'INVALID_INVESTIGATION', 'INVALID_QUESTION',
   'INVALID_SCOPE', 'INVALID_TARGET', 'INVALID_TIME_RANGE', 'INVESTIGATION_NOT_FOUND',
   'NO_PENDING_QUESTION', 'QUERY_TOO_LARGE_NARROW_TIME_RANGE', 'REPORT_NOT_FOUND', 'REPORT_TEXT_TOO_LONG',
-  'INVALID_TOOL_ARGUMENTS', 'TIMEZONE_REQUIRED', 'INVALID_FACT_UNCERTAINTY', 'INVALID_PLAN', 'PLAN_STALE',
+  'INVALID_TOOL_ARGUMENTS', 'TIMEZONE_REQUIRED', 'INVALID_FACT_UNCERTAINTY', 'INVALID_PLAN', 'PLAN_STALE', 'EPISODE_CHANGED',
 ]);
 
 export function validateModelConfig(input: ModelConfig): ModelConfig {
@@ -59,6 +59,7 @@ export function publicError(error: unknown, language: Language): { code: string;
     SOURCE_REQUIRED: ['有多个数据来源，请先选择来源。', 'Multiple data sources are available. Select one first.'],
     TIMEZONE_REQUIRED: ['请先确认日期和时区，再查询对应时间段。', 'Confirm the date and timezone before querying that interval.'],
     PLAN_STALE: ['信息已更新，请读取最新上下文后调整调查计划。', 'Information changed. Read the latest context and refresh the investigation plan.'],
+    EPISODE_CHANGED: ['睡眠时段已切换，已保存的信息会保留。请基于当前时段继续。', 'The sleep episode changed. Saved information is retained. Continue with the currently selected episode.'],
     INVALID_FACT_UNCERTAINTY: ['请保留模糊描述的原话或范围，不能直接记成精确数值。', 'Keep uncertain wording or a range; do not save it as an exact value.'],
   };
   return { code, message: (labels[code] ?? ['操作未完成。请检查输入、文件或模型连接后重试。', 'The operation could not complete. Check the input, file or model connection and retry.'])[language === 'zh' ? 0 : 1] };
@@ -66,7 +67,7 @@ export function publicError(error: unknown, language: Language): { code: string;
 
 export const SYSTEM_PROMPT = `You are SleepClaw, a personal sleep investigation assistant for ordinary adults.
 Use the user's selected language. Explain metrics in everyday language. No clinical diagnoses or treatment protocols.
-The supplied current domain snapshot is authoritative; previous chat facts may be superseded. Never restore a corrected or deleted fact from old conversation.
+The supplied current domain snapshot and sleepEpisodeId are authoritative; previous chat facts may be superseded. Never restore a corrected, deleted or different-episode fact from old conversation. When the selected episode changes, use only that episode's current sleep facts plus shared profile facts. Statements in historical goals, plans, reports and feedback never establish facts for a different sleep without explicit user confirmation.
 Ask exactly ONE question at a time. Save each question via sleep_question before showing it. Distinguish profile habits from a single sleep's facts; skipped means unknown. Save facts only actually supplied by the user, without guessing numbers from vague answers.
 Use sleep_context to see pending fixed questions; avoid repeating known answers. Gather necessary basics gently and permit skipping or a direct report at any time.
 For multi-step investigations save a short user-visible sleep_plan with the current revision; update it after facts or target change. Read guidance for uncertainty and stale plans. Do not expose private chain-of-thought. A simple request can go straight to the relevant tool.

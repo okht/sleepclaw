@@ -6,6 +6,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import type { AppSnapshot, ChatMessage, Fact, Investigation, Language, Metric, Report, SleepScope } from '../shared/types';
 import { applyStreamEvent, conversationFacts, displayNumber, errorKey, formatDate, isSnapshot, localizedRecordText, manualTargetPayload, orderedReports, toDatetimeLocal, visibleMessages } from './ui-model';
+import { reportsForEpisode } from '../shared/episode';
 
 const owl = new URL('./assets/owl-mark.svg', import.meta.url).href;
 type Tab = 'chat' | 'data' | 'reports';
@@ -295,7 +296,7 @@ const convertMessage = (message: ChatMessage) => ({ id: message.id, role: messag
 
 export function ConversationEmpty({ state, blocked, onOpenData, onOpenReports, importFile }: { state: AppSnapshot; blocked: boolean; onOpenData: () => void; onOpenReports: () => void; importFile: () => Promise<void> }) {
   const { t } = useTranslation();
-  const report = orderedReports(state.reports.filter((item) => item.investigationId === state.active?.id), state.active?.id)[0];
+  const report = orderedReports(reportsForEpisode(state.reports, state.active), state.active?.id)[0];
   const stale = report && (report.status === 'stale' || report.factRevision !== state.active?.revision);
   const title = state.busy ? 'conversationWorking' : report ? (stale ? 'conversationReportStale' : 'conversationReportReady') : 'conversationEmptyTitle';
   const description = state.busy ? 'conversationWorkingHint' : report ? (stale ? 'conversationReportStaleHint' : 'conversationReportReadyHint') : state.configured ? 'conversationEmptyHint' : 'conversationLocalHint';
@@ -355,7 +356,7 @@ function DataPanel({ state, action, blocked, importFile }: { state: AppSnapshot;
   const facts = conversationFacts(state.facts, state.active?.id);
   const [scope, setScope] = useState<SleepScope>(state.active?.scope || 'main');
   return <section className="page-body data-page"><div className="page-heading"><div><p className="eyebrow">{t('dataEyebrow')}</p><h1>{t('data')}</h1></div><button className="primary-button" onClick={() => void importFile()} disabled={blocked}>＋ {t('import')}</button></div>
-    <section className="panel"><h2>{t('selectedSleep')}</h2>{state.active?.start ? <p>{formatDate(state.active.start, state.language)} — {formatDate(state.active.end, state.language)}<span className="badge">{state.active.source}</span></p> : <p className="muted">{t('noTarget')}</p>}</section>
+    <section className="panel"><h2>{t('selectedSleep')}</h2>{state.active?.start ? <p>{formatDate(state.active.start, state.language)} — {formatDate(state.active.end, state.language)}<span className="badge">{state.active.source}</span></p> : <p className="muted">{t('noTarget')}</p>}<p className="small muted">{t('sleepFactsScopeHint')}</p></section>
     <ManualTargetForm key={`${state.active?.id}-${state.active?.start}-${state.active?.end}-${state.active?.source}`} state={state} action={action} blocked={blocked} />
     {state.candidates.length ? <section className="panel"><div className="section-heading"><h2>{t('candidates')}</h2><ScopeSelect value={scope} onChange={setScope} disabled={blocked} /></div>{!state.active ? <p className="small warning">{t('startBeforeTarget')}</p> : null}<div className="candidate-list">
       {state.candidates.map((candidate) => <article className="candidate" key={candidate.id}><div><strong>{formatDate(candidate.start, state.language)} — {formatDate(candidate.end, state.language)}</strong><p className="small muted">{candidate.source} · {displayNumber(candidate.asleepMinutes)} {t('minutes')}</p></div><button className="secondary-button" disabled={blocked || !state.active} onClick={() => void action('target', { start: candidate.start, end: candidate.end, source: candidate.source, scope })}>{t('chooseSleep')}</button></article>)}
@@ -400,7 +401,7 @@ function FactRow({ fact, action, blocked }: { fact: Fact; action: Action; blocke
 
 export function ReportsPanel({ state, action, blocked, makeReport }: { state: AppSnapshot; action: Action; blocked: boolean; makeReport: () => Promise<void> }) {
   const { t } = useTranslation();
-  const reports = orderedReports(state.reports, state.active?.id);
+  const reports = orderedReports(state.active ? reportsForEpisode(state.reports, state.active) : state.reports, state.active?.id);
   const [selected, setSelected] = useState<string>();
   const report = reports.find((item) => item.id === selected) || reports[0];
   return <section className={`page-body reports-page ${report ? 'reports-page-populated' : ''}`}><div className={report ? 'report-toolbar' : 'page-heading'}>{report ? <h1 className="sr-only">{t('reports')}</h1> : <div><p className="eyebrow">{t('reportEyebrow')}</p><h1>{t('reportsTitle')}</h1><p className="muted">{t('reportsIntro')}</p></div>}
