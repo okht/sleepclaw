@@ -5,8 +5,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { Type } from 'typebox';
-import { defineTool } from '@earendil-works/pi-coding-agent';
-import { chatMessages, makeSession, publicError, testConnection, validateModelConfig } from '../src/agent.js';
+import { defineTool, ModelRuntime } from '@earendil-works/pi-coding-agent';
+import { InMemoryCredentialStore } from '@earendil-works/pi-ai';
+import { chatMessages, makeSession, publicError, recordChatAction, recordPromptPresentation, testConnection, validateModelConfig } from '../src/agent.js';
 import type { ModelConfig } from '../src/shared/types.js';
 
 interface RequestBody { model: string; messages: Array<{ role: string; content?: unknown; tool_calls?: unknown[] }>; tools?: Array<{ type?: string; name?: string; function?: { name: string } }>; stream?: boolean }
@@ -154,7 +155,10 @@ test('real Pi session resumes persisted messages and strips internal context fro
   const sessionDir = join(f.home, 'sessions', 'test-investigation');
   let session = await makeSession(f.home, f.config, [], sessionDir);
   try {
-    await session.prompt('Synthetic first question.\n<sleepclaw-current-context>{"synthetic":true}</sleepclaw-current-context>');
+    const prompt = 'Synthetic first question.\n<sleepclaw-current-context>{"synthetic":true}</sleepclaw-current-context>';
+    const action = recordChatAction(session.sessionManager, { kind: 'send', language: 'en', text: 'Synthetic first question.' });
+    recordPromptPresentation(session.sessionManager, prompt, action);
+    await session.prompt(prompt);
     assert.ok((await readdir(sessionDir)).some((file) => file.endsWith('.jsonl')));
     session.dispose();
     session = await makeSession(f.home, f.config, [], sessionDir);
@@ -165,6 +169,47 @@ test('real Pi session resumes persisted messages and strips internal context fro
     assert.match(sent, /Synthetic first question/);
     assert.match(sent, /Saved synthetic answer/);
   } finally { session.dispose(); await f.cleanup(); }
+});
+
+test('a provided native model runtime owns authentication without API-key config or custom provider files', { timeout: 20_000 }, async () => {
+  const f = await fixture(({ body }, response) => {
+    if (body.tools?.some(tool => tool.function?.name === 'sleepclaw_connection_test')) {
+      if (body.messages.at(-1)?.role === 'tool') respondText(response, String(body.messages.at(-1)?.content));
+      else respondTool(response, 'sleepclaw_connection_test');
+    } else respondText(response, 'Synthetic native runtime response.');
+  });
+  let session: Awaited<ReturnType<typeof makeSession>> | undefined;
+  try {
+    const path = join(f.home, 'synthetic-native-models.json');
+    await writeFile(path, JSON.stringify({ providers: { 'synthetic-native': { baseUrl: f.config.baseUrl, api: 'openai-completions', models: [{
+      id: 'mock-sleep-model', reasoning: false, input: ['text'], contextWindow: 128000, maxTokens: 4096,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    }] } } }));
+    const runtime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath: path, allowModelNetwork: false });
+    await runtime.setRuntimeApiKey('synthetic-native', SYNTHETIC_KEY);
+    const config = { provider: 'synthetic-native', model: 'mock-sleep-model' };
+    await testConnection(f.home, config, undefined, runtime);
+    session = await makeSession(f.home, config, [], undefined, undefined, runtime);
+    await session.prompt('Synthetic native-auth request.');
+    assert.ok(chatMessages(session).some(message => message.text === 'Synthetic native runtime response.'));
+    assert.ok(f.requests.every(request => request.authorization === `Bearer ${SYNTHETIC_KEY}`));
+    await assert.rejects(readFile(join(f.home, 'pi', 'sleepclaw-models.json')), { code: 'ENOENT' });
+    await assert.rejects(makeSession(f.home, { provider: 'synthetic-native', model: 'missing-model' }, [], undefined, undefined, runtime), /MODEL_NOT_FOUND/);
+  } finally { session?.dispose(); await f.cleanup(); }
+});
+
+test('application-owned sign-in and question errors stay safe, and import cancellation retains rollback semantics', () => {
+  for (const code of ['QUESTION_ALREADY_ANSWERED', 'AUTH_REQUIRED', 'AUTH_INPUT_REQUIRED', 'AUTH_INPUT_INVALID', 'CREDENTIAL_STORAGE_UNAVAILABLE', 'AUTH_UNAVAILABLE']) {
+    for (const language of ['zh', 'en'] as const) {
+      const result = publicError(new Error(code), language);
+      assert.equal(result.code, code);
+      assert.notEqual(result.message, code);
+    }
+  }
+  assert.equal(publicError(new Error('IMPORT_CANCELLED'), 'zh').code, 'IMPORT_CANCELLED');
+  assert.match(publicError(new Error('IMPORT_CANCELLED'), 'zh').message, /回滚/);
+  assert.match(publicError(new Error('IMPORT_CANCELLED'), 'en').message, /rolled back/);
+  assert.equal(publicError(new DOMException('aborted', 'AbortError'), 'zh').code, 'CANCELLED');
 });
 
 test('connection check requires tool execution plus streamed text', { timeout: 20_000 }, async () => {

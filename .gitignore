@@ -36,6 +36,9 @@ sleepclaw-home/
 *.sqlite3
 *.sqlite3-*
 credentials.bin
+credentials.bin.tmp
+chatgpt-auth.bin
+chatgpt-auth.bin.tmp
 credentials*.json
 apple_health_export/
 *.xml

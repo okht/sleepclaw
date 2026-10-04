@@ -4,8 +4,9 @@ import {
   useExternalStoreRuntime, type AppendMessage,
 } from '@assistant-ui/react';
 import { useTranslation } from 'react-i18next';
-import type { AppSnapshot, ChatMessage, Fact, Investigation, Language, Metric, Report, SleepScope } from '../shared/types';
-import { applyStreamEvent, conversationFacts, displayNumber, errorKey, factDisplayValue, formatDate, formatReportTime, isSnapshot, localizedRecordText, manualTargetPayload, orderedReports, toDatetimeLocal, visibleMessages } from './ui-model';
+import type { AppSnapshot, ChatMessage, Fact, Feedback, Investigation, Language, Metric, Report, SleepScope } from '../shared/types';
+import { applyStreamEvent, conversationFacts, displayNumber, errorKey, factDisplayValue, formatDate, formatReportTime, isSnapshot, latestReportFeedback, localizedRecordText, manualTargetPayload, orderedReports, progressText, taskPresentation, toDatetimeLocal, visibleMessages } from './ui-model';
+import { MarkdownText } from './MarkdownText';
 import { reportsForEpisode } from '../shared/episode';
 import { factTopicLabel } from '../shared/fact-contract';
 
@@ -194,9 +195,11 @@ export function App() {
   // A not-yet-created analysis has no selected report or single-sleep data.
   const viewState = newAnalysis ? { ...state, active: undefined, question: undefined, canResume: false, notice: undefined, localCollection: false, messages: [], facts: state.facts.filter(fact => fact.scope === 'profile') } : state;
   const showConnection = settings || (!state.configured && !offline);
+  const task = taskPresentation(state, { chatVisible: !showConnection && tab === 'chat' && Boolean(state.active) && !newAnalysis });
   return <div className={showConnection ? 'app connection-app' : 'app'}>
     <DesktopTitlebar>{controls}</DesktopTitlebar>
     {showConnection ? <>
+      {task.placement === 'global' ? <GlobalTaskProgress state={state} progress={progress} action={action} /> : null}
       <div className="connection-scroll"><ConnectionPanel state={state} action={action} pending={pending > 0} onDone={() => { setSettings(false); setOffline(true); }} onOffline={() => { setOffline(true); setSettings(false); }} /></div>
     </> : <>
       <aside className="sidebar" aria-label={t('history')}>
@@ -219,16 +222,17 @@ export function App() {
           </div>
           <div className="header-right"><ModelConnectionButton state={state} blocked={blocked} onConnect={() => setSettings(true)} /></div>
         </header>
+        {task.placement === 'global' ? <GlobalTaskProgress state={state} progress={progress} action={action} /> : null}
+        {!newAnalysis ? <QuestionnaireProgress state={state} /> : null}
         {!newAnalysis ? <RecoveryNotice state={state} action={action} blocked={blocked} makeReport={makeReport} onContinue={() => setTab('chat')} onConnect={() => setSettings(true)} /> : null}
         <div className={`workspace-content ${tab === 'chat' && state.active && !newAnalysis ? 'workspace-content-thread' : ''}`} role="tabpanel" aria-labelledby={`tab-${tab}`} id={`panel-${tab}`}>
           {tab === 'chat' ? (!state.active || newAnalysis ? <Welcome state={state} action={action} importFile={importFile} blocked={blocked} onStarted={() => setNewAnalysis(false)} onConnect={() => setSettings(true)} />
-            : <ChatPanel key={state.active.id} state={state} delta={delta} action={action} importFile={importFile} makeReport={makeReport} blocked={blocked} onConnect={() => setSettings(true)} onOpenData={() => setTab('data')} onOpenReports={() => setTab('reports')} />) : null}
+            : <ChatPanel key={state.active.id} state={state} delta={delta} progress={progress} action={action} importFile={importFile} makeReport={makeReport} blocked={blocked} onConnect={() => setSettings(true)} onOpenData={() => setTab('data')} onOpenReports={() => setTab('reports')} />) : null}
           {tab === 'data' ? <DataPanel key={viewState.active?.id || 'unselected'} state={viewState} action={action} blocked={blocked} importFile={importFile} /> : null}
           {tab === 'reports' ? <ReportsPanel key={`${viewState.active?.id ?? 'unselected'}/${viewState.active?.sleepEpisodeId ?? ''}`} state={viewState} action={action} blocked={blocked} makeReport={makeReport} onContinue={() => setTab('chat')} onReview={() => setTab('data')} /> : null}
         </div>
       </main>
     </>}
-    {progress ? <div className="progress-toast" role="status"><span className="pulse-dot" />{progress}</div> : null}
     {error ? <div className="error-toast" role="alert"><span>{error}</span><button className="icon-button" aria-label={t('close')} onClick={clearError}>×</button></div> : null}
     {deleteTarget ? <DeleteAnalysisDialog key={deleteTarget.id} item={deleteTarget} blocked={blocked} fallbackFocus={newButton}
       onCancel={() => setDeleteTarget(undefined)} onConfirm={async () => {
@@ -239,23 +243,57 @@ export function App() {
   </div>;
 }
 
-export function ConnectionPanel({ state, action, pending, onDone, onOffline }: { state: AppSnapshot; action: Action; pending: boolean; onDone: () => void; onOffline: () => void }) {
+export function GlobalTaskProgress({ state, progress, action }: { state: AppSnapshot; progress: string; action: Action }) {
   const { t } = useTranslation();
-  const [provider, setProvider] = useState(state.model?.provider || 'anthropic');
-  const [model, setModel] = useState(state.model?.model || '');
+  const [cancelling, setCancelling] = useState(false);
+  const task = state.task;
+  useEffect(() => { if (!task) setCancelling(false); }, [task]);
+  if (!state.busy || !task) return null;
+  const message = progress && task.kind !== 'auth' ? progressText(progress, state.language) : t(`task_${task.kind}`);
+  return <section className="task-progress task-progress-global" role="status" aria-live="polite"><span className="pulse-dot" /><div className="task-progress-copy"><strong>{message}</strong>{task.kind === 'import' ? <p className="small muted">{t('cancelImportHint')}</p> : null}</div>
+    {task.cancellable ? <button type="button" className="secondary-button" disabled={cancelling} onClick={async () => { setCancelling(true); try { await action('cancel'); } finally { setCancelling(false); } }}>{t(cancelling ? 'cancellingTask' : 'cancelTask')}</button> : null}
+  </section>;
+}
+
+export function ComposerTaskStatus({ state, progress }: { state: AppSnapshot; progress: string }) {
+  const { t } = useTranslation();
+  if (taskPresentation(state, { chatVisible: true }).placement !== 'composer') return null;
+  return <div className="composer-task-status" role="status" aria-live="polite"><span className="pulse-dot" /><span>{progress ? progressText(progress, state.language) : t('task_model')}</span></div>;
+}
+
+export function QuestionnaireProgress({ state }: { state: AppSnapshot }) {
+  const { t } = useTranslation();
+  const progress = state.collectionProgress;
+  if (!state.active || !progress) return null;
+  return <section className="questionnaire-progress" aria-label={t('questionnaireProgress')}>
+    <div className="questionnaire-progress-heading"><span>{t('questionnaireBasics')}</span><strong>{t('questionnaireCount', { completed: progress.completed, total: progress.total })}</strong><span className="questionnaire-phase">{t(`questionnairePhase_${progress.phase}`)}</span></div>
+    <progress max={progress.total} value={progress.completed} aria-label={t('questionnaireProgress')} aria-valuetext={t('questionnaireCount', { completed: progress.completed, total: progress.total })} />
+    <div className="questionnaire-progress-detail"><span>{t(`questionnaireHint_${progress.phase}`, { remaining: progress.remaining })}</span>{progress.skipped > 0 ? <span>{t('questionnaireSkipped', { count: progress.skipped })}</span> : null}</div>
+  </section>;
+}
+
+export function ConnectionPanel({ state, action, pending: pendingRequest, onDone, onOffline }: { state: AppSnapshot; action: Action; pending: boolean; onDone: () => void; onOffline: () => void }) {
+  const { t } = useTranslation();
+  const pending = pendingRequest || state.busy;
+  const [authMode, setAuthMode] = useState<'api-key' | 'chatgpt'>(state.model?.authMode === 'chatgpt' ? 'chatgpt' : 'api-key');
+  const [provider, setProvider] = useState(state.model?.authMode === 'chatgpt' ? 'anthropic' : state.model?.provider || 'anthropic');
+  const [model, setModel] = useState(state.model?.authMode === 'chatgpt' ? '' : state.model?.model || '');
   const [apiKey, setApiKey] = useState('');
   const [baseUrl, setBaseUrl] = useState(state.model?.baseUrl || '');
   const [protocol, setProtocol] = useState<'openai-completions' | 'anthropic-messages'>(state.model?.protocol || 'openai-completions');
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    const ok = await action('configure', { provider, model: model.trim(), apiKey: apiKey.trim(), ...(baseUrl.trim() ? { baseUrl: baseUrl.trim() } : {}), protocol: provider === 'anthropic' ? 'anthropic-messages' : protocol });
+    if (pending) return;
+    const ok = await action('configure', { authMode: 'api-key', provider, model: model.trim(), apiKey: apiKey.trim(), ...(baseUrl.trim() ? { baseUrl: baseUrl.trim() } : {}), protocol: provider === 'anthropic' ? 'anthropic-messages' : protocol });
     setApiKey('');
     if (ok) onDone();
   };
   return <main className="connection-content">
     <div className="connection-brand"><div className="owl-halo"><Owl large /></div><p className="connection-wordmark">SleepClaw<span aria-hidden="true">.</span></p><h1>{t('connectTitle')}</h1><p className="muted">{t('connectIntro')}</p></div>
-    <form className="connection-form" onSubmit={submit}>
+    <div className="connection-form">
       <div className="connection-form-heading"><p className="eyebrow">{t('connectionEyebrow')}</p><h2>{t('connectionHeading')}</h2><p className="muted">{t('connectionDescription')}</p></div>
+      <div className="auth-mode-picker" role="group" aria-label={t('connectionMethod')}><button type="button" className={authMode === 'chatgpt' ? 'selected' : ''} aria-pressed={authMode === 'chatgpt'} disabled={pending || state.busy} onClick={() => { setAuthMode('chatgpt'); setApiKey(''); }}>{t('chatgptSubscription')}</button><button type="button" className={authMode === 'api-key' ? 'selected' : ''} aria-pressed={authMode === 'api-key'} disabled={pending || state.busy} onClick={() => setAuthMode('api-key')}>{t('apiKeyConnection')}</button></div>
+      {authMode === 'chatgpt' ? <SubscriptionConnection state={state} action={action} pending={pending} onDone={onDone} /> : <form className="api-key-form" onSubmit={submit}>
       <div className="provider-picker" role="group" aria-label={t('provider')}>
         {[['anthropic', 'Anthropic'], ['openai', 'OpenAI'], ['custom', t('custom')]].map(([value, label]) => <button type="button" aria-pressed={provider === value} key={value} className={provider === value ? 'selected' : ''} disabled={pending} onClick={() => { setProvider(value!); setProtocol(value === 'anthropic' ? 'anthropic-messages' : 'openai-completions'); setModel(''); setBaseUrl(''); }}>{label}</button>)}
       </div>
@@ -264,12 +302,45 @@ export function ConnectionPanel({ state, action, pending, onDone, onOffline }: {
       <label>{t('model')}<input value={model} onChange={(e) => setModel(e.target.value)} required disabled={pending} autoComplete="off" spellCheck={false} aria-describedby="model-hint" /><small id="model-hint">{t('modelHint')}</small></label>
       <label>{t('apiKey')}<input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} required disabled={pending} autoComplete="off" spellCheck={false} placeholder={t('apiKeyHint')} aria-describedby="key-hint" /><small id="key-hint">{t('keyPrivacy')}</small></label>
       <button className="primary-button" type="submit" disabled={pending || !model.trim() || !apiKey.trim()}>{pending ? t('connecting') : t('connect')}<Icon name="arrow" /></button>
+      </form>}
       <p className="privacy-note"><Icon name="shield" /><span>{t('privacy')}</span></p>
       <div className="connection-offline"><button type="button" className="text-button offline-link" onClick={onOffline} disabled={pending}>{state.configured ? t('back') : t('offline')}<Icon name="arrow" /></button>
         {!state.configured ? <p className="small muted">{t('offlineNote')}</p> : null}
       </div>
-    </form>
+    </div>
   </main>;
+}
+
+export function SubscriptionConnection({ state, action, pending, onDone }: { state: AppSnapshot; action: Action; pending: boolean; onDone: () => void }) {
+  const { t } = useTranslation();
+  const subscription = state.subscription;
+  const models = subscription?.models ?? [];
+  const [model, setModel] = useState(state.model?.authMode === 'chatgpt' ? state.model.model : models.find(item => item.id === 'gpt-5.6-sol')?.id ?? models[0]?.id ?? '');
+  const [code, setCode] = useState('');
+  const [submittingCode, setSubmittingCode] = useState(false);
+  const status = subscription?.status ?? 'signed-out';
+  const signingIn = status === 'signing-in';
+  const blocked = pending || state.busy || signingIn;
+  const selectedModel = models.some(item => item.id === model) ? model : models.find(item => item.id === 'gpt-5.6-sol')?.id ?? models[0]?.id ?? '';
+  useEffect(() => { if (!signingIn) setCode(''); }, [signingIn]);
+  const connect = async () => {
+    if (!selectedModel || blocked) return;
+    if (await action(status === 'signed-in' ? 'configureSubscription' : 'loginSubscription', { model: selectedModel })) onDone();
+  };
+  return <section className="subscription-connection" aria-label={t('chatgptSubscription')}>
+    <p className="small muted">{t('subscriptionHint')}</p>
+    <p className={`subscription-status${status === 'expired' ? ' warning' : status === 'signed-in' ? ' success' : ''}`} role="status">{t(`subscriptionStatus_${status}`)}</p>
+    <label>{t('model')}<select value={selectedModel} onChange={event => setModel(event.target.value)} disabled={blocked || !models.length} aria-describedby="subscription-model-hint">{models.length ? models.map(item => <option key={item.id} value={item.id}>{item.name}</option>) : <option value="">{t('subscriptionModelsUnavailable')}</option>}</select><small id="subscription-model-hint">{t('subscriptionModelHint')}</small></label>
+    {signingIn ? <div className="subscription-signing"><p className="small">{t('subscriptionBrowserHint')}</p>{subscription?.progress ? <p className="small muted">{t('subscriptionWaiting')}</p> : null}
+      {subscription?.canOpenBrowser ? <button type="button" className="secondary-button" onClick={() => void action('openSubscriptionLogin')}>{t('reopenSubscriptionLogin')}</button> : null}
+      {subscription?.prompt ? <form className="subscription-code-form" onSubmit={async event => { event.preventDefault(); if (!code.trim() || submittingCode) return; setSubmittingCode(true); const response = code.trim(); setCode(''); try { await action('submitSubscriptionCode', { code: response }); } finally { setSubmittingCode(false); } }}>
+        <p className="small muted">{subscription.prompt.message}</p><label>{t('subscriptionCallback')}<input type="password" value={code} onChange={event => setCode(event.target.value)} placeholder={subscription.prompt.placeholder || t('subscriptionCallbackPlaceholder')} autoComplete="off" spellCheck={false} disabled={submittingCode} maxLength={8192} required /><small>{t('subscriptionCallbackPrivacy')}</small></label><button type="submit" className="secondary-button" disabled={submittingCode || !code.trim()}>{t('completeSubscriptionLogin')}</button>
+      </form> : null}
+    </div> : <div className="subscription-actions"><button type="button" className="primary-button" disabled={blocked || !selectedModel} onClick={() => void connect()}>{t(status === 'signed-in' ? 'useSubscription' : status === 'expired' ? 'reconnectSubscription' : 'loginSubscription')}<Icon name="arrow" /></button>
+      {status === 'signed-in' || status === 'expired' ? <button type="button" className="text-button" disabled={blocked} onClick={() => void action('logoutSubscription')}>{t('logoutSubscription')}</button> : null}
+    </div>}
+    <p className="small muted">{t('subscriptionPrivacy')}</p>
+  </section>;
 }
 
 function ScopeSelect({ value, onChange, disabled = false, compact = false }: { value: SleepScope; onChange: (value: SleepScope) => void; disabled?: boolean; compact?: boolean }) {
@@ -295,15 +366,16 @@ export function Welcome({ state, action, importFile, blocked, onStarted, onConne
 }
 
 function UserMessage() { const { t } = useTranslation(); return <MessagePrimitive.Root className="message user-message"><span className="message-author">{t('you')}</span><div className="message-text"><MessagePrimitive.Parts /></div></MessagePrimitive.Root>; }
-function AssistantMessage() { return <MessagePrimitive.Root className="message assistant-message"><span className="message-author"><Owl /> SleepClaw</span><div className="message-text"><MessagePrimitive.Parts /></div></MessagePrimitive.Root>; }
+function AssistantMessage() { return <MessagePrimitive.Root className="message assistant-message"><span className="message-author"><Owl /> SleepClaw</span><div className="message-text"><MessagePrimitive.Parts components={{ Text: MarkdownText }} /></div></MessagePrimitive.Root>; }
 const messageComponents = { UserMessage, AssistantMessage };
 const convertMessage = (message: ChatMessage) => ({ id: message.id, role: message.role, content: [{ type: 'text' as const, text: message.text }] });
 
 const modelFailureCodes = new Set(['AUTH_FAILED', 'QUOTA', 'TIMEOUT', 'TURN_LIMIT', 'REQUEST_FAILED', 'MODEL_NOT_FOUND']);
 export function ModelConnectionButton({ state, blocked, onConnect }: { state: AppSnapshot; blocked: boolean; onConnect: () => void }) {
   const { t } = useTranslation();
-  const failed = state.configured && Boolean(state.notice && modelFailureCodes.has(state.notice.code));
-  const title = failed ? `${t('modelConnectionWarning')} ${t(errorKey(state.notice!.code))}` : t('settings');
+  const expired = state.model?.authMode === 'chatgpt' && state.subscription?.status === 'expired';
+  const failed = expired || (state.configured && Boolean(state.notice && modelFailureCodes.has(state.notice.code)));
+  const title = failed ? `${t('modelConnectionWarning')} ${t(errorKey(expired ? 'AUTH_REQUIRED' : state.notice!.code))}` : t('settings');
   return <button className="model-button" onClick={onConnect} disabled={blocked} title={title} aria-label={state.model?.model ? `${title}: ${state.model.model}` : title}>
     <span className={`status-dot ${failed ? 'warning' : state.configured ? 'connected' : ''}`} /><span>{state.model?.model || t('connectModel')}</span>
   </button>;
@@ -343,7 +415,7 @@ export function ConversationEmpty({ state, blocked, onOpenData, onOpenReports, i
   </section>;
 }
 
-export function ChatPanel({ state, delta, action, importFile, makeReport, blocked, onConnect, onOpenData, onOpenReports }: { state: AppSnapshot; delta: string; action: Action; importFile: () => Promise<void>; makeReport: MakeReport; blocked: boolean; onConnect: () => void; onOpenData: () => void; onOpenReports: () => void }) {
+export function ChatPanel({ state, delta, progress = '', action, importFile, makeReport, blocked, onConnect, onOpenData, onOpenReports }: { state: AppSnapshot; delta: string; progress?: string; action: Action; importFile: () => Promise<void>; makeReport: MakeReport; blocked: boolean; onConnect: () => void; onOpenData: () => void; onOpenReports: () => void }) {
   const { t } = useTranslation();
   const messages = useMemo(() => visibleMessages(state.messages, delta, state.active?.id), [state.messages, delta, state.active?.id]);
   const onNew = useCallback(async (message: AppendMessage) => {
@@ -351,7 +423,8 @@ export function ChatPanel({ state, delta, action, importFile, makeReport, blocke
     if (text.trim()) await action('send', { text });
   }, [action]);
   const onCancel = useCallback(async () => { await action('cancel'); }, [action]);
-  const runtime = useExternalStoreRuntime({ messages, convertMessage, isRunning: state.busy, onNew, onCancel });
+  const task = taskPresentation(state, { chatVisible: true });
+  const runtime = useExternalStoreRuntime({ messages, convertMessage, isRunning: task.modelRunning, onNew, onCancel });
   const empty = !messages.length && !state.question;
   return <AssistantRuntimeProvider runtime={runtime}><ThreadPrimitive.Root className="thread">
     <div className="conversation-heading"><div><p className="eyebrow"><Icon name="moon" />{t(state.active?.scope || 'main')}</p><h1>{state.active?.goal}</h1></div><div className="conversation-report-actions"><button className="text-button report-button" onClick={() => void makeReport()} disabled={blocked}>{t('createReport')}<Icon name="arrow" /></button><button className="text-button" onClick={() => void makeReport(true)} disabled={blocked}>{t('createLocalReport')}</button></div></div>
@@ -359,17 +432,32 @@ export function ChatPanel({ state, delta, action, importFile, makeReport, blocke
       {empty ? <ConversationEmpty state={state} blocked={blocked} onOpenData={onOpenData} onOpenReports={onOpenReports} importFile={importFile} /> : null}
       {!messages.length && state.question ? <div className="question-presence"><Owl /><span>{t('appSubtitle')}</span></div> : null}
       <ThreadPrimitive.Messages components={messageComponents} />
+      <InvestigationPlanView investigation={state.active} />
       {state.question ? <QuestionCard key={state.question.id} state={state} action={action} blocked={blocked} makeReport={makeReport} /> : null}
       <CollectionContinuation state={state} action={action} blocked={blocked} onReview={onOpenData} />
     </ThreadPrimitive.Viewport>
     <div className="composer-area">
-      {state.configured ? <ComposerPrimitive.Root className="composer"><ComposerPrimitive.Input className="composer-input" placeholder={t('composer')} aria-label={t('composer')} disabled={blocked && !state.busy} />
+      {state.configured ? <ComposerPrimitive.Root className="composer"><ComposerPrimitive.Input className="composer-input" placeholder={t('composer')} aria-label={t('composer')} disabled={blocked && !task.modelRunning} />
         <div className="composer-actions"><button type="button" className="icon-button" aria-label={t('import')} title={t('import')} onClick={() => void importFile()} disabled={blocked}>＋</button>
-          {state.busy ? <ComposerPrimitive.Cancel className="send-button">■ <span>{t('stop')}</span></ComposerPrimitive.Cancel> : <ComposerPrimitive.Send className="send-button">↑ <span>{t('send')}</span></ComposerPrimitive.Send>}
+          <ComposerTaskStatus state={state} progress={progress} />
+          {task.modelRunning ? (task.canCancel ? <ComposerPrimitive.Cancel className="send-button">■ <span>{t('stop')}</span></ComposerPrimitive.Cancel> : null) : <ComposerPrimitive.Send className="send-button" disabled={blocked}>↑ <span>{t('send')}</span></ComposerPrimitive.Send>}
         </div></ComposerPrimitive.Root> : <div className="connect-callout"><div className="connect-callout-copy"><Icon name="moon" /><div><p>{t('localModeTitle')}</p><span>{t('localModeHint')}</span></div></div><button className="primary-button" onClick={onConnect} disabled={blocked}>{t('connectModel')}<Icon name="arrow" /></button></div>}
       <p className="composer-disclaimer">{t('disclaimer')}</p>
     </div>
   </ThreadPrimitive.Root></AssistantRuntimeProvider>;
+}
+
+export function InvestigationPlanView({ investigation }: { investigation?: Investigation }) {
+  const { t } = useTranslation();
+  const plan = investigation?.plan;
+  if (!plan) return null;
+  const stale = plan.revision !== investigation.revision;
+  return <details className={`investigation-plan${stale ? ' investigation-plan-stale' : ''}`} open={!stale}>
+    <summary>{t('investigationPlan')}<span className={`badge${stale ? ' warning' : ''}`}>{t(stale ? 'planStale' : 'planCurrent')}</span></summary>
+    {stale ? <p className="small warning">{t('planStaleHint')}</p> : null}
+    <p className="plan-objective">{plan.objective}</p>
+    <ol>{plan.steps.map(step => <li key={step.id}><span className="badge">{t(`planStep_${step.status}`)}</span><div><p>{step.description}</p>{step.reason ? <p className="small muted">{step.reason}</p> : null}</div></li>)}</ol>
+  </details>;
 }
 
 function CollectionContinuation({ state, action, blocked, onContinue, onReview }: { state: AppSnapshot; action: Action; blocked: boolean; onContinue?: () => void; onReview?: () => void }) {
@@ -466,7 +554,7 @@ export function ReportsPanel({ state, action, blocked, makeReport, onContinue, o
     <p className="small muted report-history-hint">{t('reportHistoryHint')}</p>
     <CollectionContinuation state={state} action={action} blocked={blocked} onContinue={onContinue} onReview={onReview} />
     {!reports.length ? <div className="empty-panel"><Owl />{state.active ? <><p className="small muted">{t('currentAnalysis')}</p><h2>{state.active.goal}</h2><p className="muted">{t('noReports')}</p></> : <p className="muted">{t('noActiveReport')}</p>}</div> : null}
-    {report ? <ReportView key={report.id} report={report} investigationGoal={state.active?.goal} language={state.language} action={action} blocked={blocked} hasFeedback={state.feedback.some((item) => item.reportId === report.id)} /> : null}
+    {report ? <ReportView key={report.id} report={report} investigationGoal={state.active?.goal} language={state.language} action={action} blocked={blocked} latestFeedback={latestReportFeedback(state.feedback, report.id)} /> : null}
   </section>;
 }
 
@@ -483,16 +571,22 @@ export function ReportedFacts({ facts, language }: { facts?: Fact[]; language: L
   </section>;
 }
 
-export function ReportView({ report, investigationGoal, language, action, blocked, hasFeedback }: { report: Report; investigationGoal?: string; language: Language; action: Action; blocked: boolean; hasFeedback: boolean }) {
+export function ReportView({ report, investigationGoal, language, action, blocked, hasFeedback, latestFeedback }: { report: Report; investigationGoal?: string; language: Language; action: Action; blocked: boolean; hasFeedback?: boolean; latestFeedback?: Feedback }) {
   const { t } = useTranslation();
-  const [note, setNote] = useState('');
+  const feedback = latestFeedback?.reportId === report.id ? latestFeedback : undefined;
+  const [note, setNote] = useState(feedback?.note ?? '');
+  useEffect(() => { setNote(feedback?.note ?? ''); }, [report.id, feedback?.note]);
   const availableMetrics = report.metrics.filter((metric) => metric.value !== null && Number.isFinite(metric.value));
   const missingMetrics = report.metrics.filter((metric) => metric.value === null || !Number.isFinite(metric.value));
   return <article className="report-document"><header className="report-header"><div>{investigationGoal ? <p className="report-owner"><span>{t('currentAnalysis')}</span><strong>{investigationGoal}</strong></p> : null}<h2>{report.title}</h2><p className="report-meta">{t('revision')} {report.revision} · {formatReportTime(report.createdAt, language)}{report.basis ? <> · {t(report.basis.scope)} · {t('source')}：{report.basis.source || t('self-report')}</> : null}</p><p className="report-sleep-window"><span>{t('reportSleepWindow')}</span>{report.basis?.start && report.basis.end ? <><time dateTime={report.basis.start}>{formatReportTime(report.basis.start, language)}</time> — <time dateTime={report.basis.end}>{formatReportTime(report.basis.end, language)}</time></> : t('reportUnknownWindow')}</p></div>{report.status === 'stale' ? <span className="badge warning">{t('stale')}</span> : null}</header>
     <section className={`report-summary ${report.score === null ? 'report-summary-unscored' : ''}`}>{report.score !== null ? <div className="report-score"><span className="small muted">{t('score')}</span><strong>{displayNumber(report.score)}</strong><span className="small muted">/ 100 · {report.scoreVersion}</span></div> : null}<div><p className="section-label">{t('summary')}</p><p>{report.summary}</p>{report.score === null ? <p className="small muted score-note">{t(report.scoreVersion === 'unscored-v1' ? 'unvalidatedScore' : 'noScore')}</p> : null}</div></section>
     {report.aiInterpretation ? <section className="report-section report-ai"><h3>{t('ai')}</h3><p className="preserve-lines">{report.aiInterpretation}</p><p className="small muted">{t('disclaimer')}</p></section> : <p className="small muted ai-pending">{t('aiPending')}</p>}
     <ReportedFacts facts={report.reportedFacts} language={language} />
-    <section className="report-section action-section"><p className="section-label">{t('tonight')}</p><h3>{report.action}</h3><details className="action-feedback"><summary>{t('feedback')}</summary><label className="sr-only" htmlFor="feedback-note">{t('feedbackNote')}</label><textarea id="feedback-note" rows={2} value={note} onChange={(event) => setNote(event.target.value)} placeholder={t('feedbackNote')} maxLength={2000} disabled={blocked} /><div className="feedback-buttons">{(['accepted', 'cannot', 'unhelpful', 'later'] as const).map((choice) => <button className="secondary-button" key={choice} disabled={blocked} onClick={() => void action('feedback', { reportId: report.id, choice, note })}>{t(choice)}</button>)}</div></details>{hasFeedback ? <p className="small success" role="status">{t('feedbackSaved')}</p> : null}</section>
+    <section className="report-section action-section"><p className="section-label">{t('tonight')}</p>{report.action.trim() ? <>
+      <h3>{report.action}</h3>
+      {feedback ? <div className="saved-feedback" role="status"><p className="small success">{t('currentFeedback', { choice: t(feedback.choice) })}</p>{feedback.note ? <p className="small preserve-lines">{feedback.note}</p> : null}</div> : hasFeedback ? <p className="small success" role="status">{t('feedbackSaved')}</p> : null}
+      <details className="action-feedback"><summary>{t(feedback ? 'updateFeedback' : 'feedback')}</summary><label className="sr-only" htmlFor="feedback-note">{t('feedbackNote')}</label><textarea id="feedback-note" rows={2} value={note} onChange={(event) => setNote(event.target.value)} placeholder={t('feedbackNote')} maxLength={2000} disabled={blocked} /><p className="small muted feedback-update-hint">{t('feedbackUpdateHint')}</p><div className="feedback-buttons">{(['accepted', 'cannot', 'unhelpful', 'later'] as const).map((choice) => <button className="secondary-button" key={choice} aria-pressed={feedback?.choice === choice} disabled={blocked} onClick={() => void action('feedback', { reportId: report.id, choice, note })}>{t(choice)}</button>)}</div></details>
+    </> : <><h3>{t('noFeasibleAction')}</h3><p className="small muted">{t('noFeasibleActionHint')}</p></>}</section>
     {report.basis ? <details className="report-section report-basis"><summary>{t('reportBasis')} <span className="small muted">{t('expand')}</span></summary><dl><div><dt>{t('scope')}</dt><dd>{t(report.basis.scope || 'main')}</dd></div><div><dt>{t('source')}</dt><dd>{report.basis.source || t('self-report')}</dd></div><div><dt>{t('startTime')}</dt><dd><time dateTime={report.basis.start}>{formatDate(report.basis.start, language)}</time></dd></div><div><dt>{t('endTime')}</dt><dd><time dateTime={report.basis.end}>{formatDate(report.basis.end, language)}</time></dd></div></dl></details> : null}
     <section className="report-section"><h3>{t('metrics')}</h3>{availableMetrics.length ? <MetricTable metrics={availableMetrics} language={language} label={t('metrics')} /> : <p className="small muted">{t('noMetrics')}</p>}
       {missingMetrics.length ? <details className="missing-metrics"><summary>{t('missingMetrics', { count: missingMetrics.length })}</summary><p className="small muted">{t('missingMetricsHint')}</p><MetricTable metrics={missingMetrics} language={language} label={t('missingMetrics', { count: missingMetrics.length })} /></details> : null}

@@ -6,6 +6,8 @@ import { InMemoryCredentialStore } from '@earendil-works/pi-ai';
 import { createAgentSession, DefaultResourceLoader, defineTool, ModelRuntime, SessionManager, SettingsManager, type AgentSession, type ToolDefinition } from '@earendil-works/pi-coding-agent';
 import type { ModelConfig, Language, ChatMessage } from './shared/types';
 import { FACT_CONTRACT_GUIDANCE } from './shared/fact-contract';
+import { openChatSession, presentedChatMessages } from './shared/chat-presentation';
+export { openChatSession, recordChatAction, recordPromptPresentation, type ChatAction } from './shared/chat-presentation';
 
 // Only application-owned codes may cross the UI boundary. Upstream messages may contain secrets.
 const PUBLIC_ERROR_CODES = new Set([
@@ -18,6 +20,7 @@ const PUBLIC_ERROR_CODES = new Set([
   'INVALID_SCOPE', 'INVALID_TARGET', 'INVALID_TIME_RANGE', 'INVESTIGATION_NOT_FOUND',
   'NO_PENDING_QUESTION', 'NO_PENDING_FOLLOWUP', 'QUERY_TOO_LARGE_NARROW_TIME_RANGE', 'REPORT_NOT_FOUND', 'REPORT_TEXT_TOO_LONG',
   'INVALID_TOOL_ARGUMENTS', 'TIMEZONE_REQUIRED', 'INVALID_FACT_UNCERTAINTY', 'INVALID_PLAN', 'PLAN_STALE', 'EPISODE_CHANGED',
+  'QUESTION_ALREADY_ANSWERED', 'AUTH_REQUIRED', 'AUTH_INPUT_REQUIRED', 'AUTH_INPUT_INVALID', 'CREDENTIAL_STORAGE_UNAVAILABLE', 'AUTH_UNAVAILABLE',
 ]);
 
 export function validateModelConfig(input: ModelConfig): ModelConfig {
@@ -37,21 +40,29 @@ export function validateModelConfig(input: ModelConfig): ModelConfig {
 
 export function publicError(error: unknown, language: Language): { code: string; message: string } {
   const text = error instanceof Error ? error.message : String(error);
-  const code = error instanceof Error && error.name === 'AbortError' ? 'CANCELLED'
-    : /401|403|authentication|unauthorized|invalid.*key/i.test(text) ? 'AUTH_FAILED'
+  const code = text === 'IMPORT_CANCELLED' ? 'IMPORT_CANCELLED'
+    : error instanceof Error && error.name === 'AbortError' ? 'CANCELLED'
+    : /401|403|authentication|unauthorized|invalid.*key|invalid_grant|refresh.*token|reconnect ChatGPT/i.test(text) ? 'AUTH_FAILED'
     : /429|quota|credit|balance/i.test(text) ? 'QUOTA'
     : /404|model.*not.*found/i.test(text) ? 'MODEL_NOT_FOUND'
     : /abort|cancel/i.test(text) ? 'CANCELLED'
     : /timeout|deadline/i.test(text) ? 'TIMEOUT'
     : PUBLIC_ERROR_CODES.has(text) ? text : 'REQUEST_FAILED';
   const labels: Record<string, [string, string]> = {
-    AUTH_FAILED: ['API Key 验证失败，请检查密钥和权限。', 'Authentication failed. Check your key and access.'],
+    AUTH_FAILED: ['模型身份验证失败，请重新登录或检查 API Key 和权限。', 'Model authentication failed. Sign in again, or check your API key and access.'],
     QUOTA: ['模型额度不足或请求过多，请检查账户后重试。', 'Quota or rate limit reached. Check your account and retry.'],
     MODEL_NOT_FOUND: ['找不到模型，请检查模型名称和服务地址。', 'Model not found. Check its name and base URL.'],
     CANCELLED: ['已取消，已经保存的信息会保留。', 'Cancelled. Previously saved information is retained.'],
+    IMPORT_CANCELLED: ['已取消导入，本次导入已回滚；原有数据不变。', 'Import cancelled and rolled back. Previously saved data is unchanged.'],
     TIMEOUT: ['连接超时，请检查网络后重试。', 'Request timed out. Check your connection and retry.'],
     TURN_LIMIT: ['模型本轮分析已达到次数上限，已保存的信息会保留。', 'The model reached the turn limit. Saved information is retained.'],
     NO_PENDING_FOLLOWUP: ['当前没有需要重试的续问，请继续当前问题。', 'There is no pending follow-up to retry. Continue with the current question.'],
+    QUESTION_ALREADY_ANSWERED: ['这项信息已保存，请继续下一题；需要时可更正已有信息。', 'This answer is already saved. Continue with the next question, or correct the saved information.'],
+    AUTH_REQUIRED: ['请先登录模型账户。', 'Sign in to your model account first.'],
+    AUTH_INPUT_REQUIRED: ['请完成登录窗口中的验证步骤。', 'Complete the verification step in the sign-in window.'],
+    AUTH_INPUT_INVALID: ['登录验证内容无效，请检查后重试。', 'The sign-in verification input is invalid. Check it and retry.'],
+    CREDENTIAL_STORAGE_UNAVAILABLE: ['暂时无法安全保存登录信息，请稍后重试。', 'Secure credential storage is currently unavailable. Try again later.'],
+    AUTH_UNAVAILABLE: ['当前登录方式暂不可用，请稍后重试。', 'This sign-in method is currently unavailable. Try again later.'],
     CONFIG_REQUIRED: ['请填写服务商、模型名称和 API Key。', 'Enter a provider, model name and API key.'],
     CONFIG_INVALID: ['模型配置格式无效，请检查协议、名称和密钥。', 'Invalid model configuration. Check its protocol, name and key.'],
     BASE_URL_INVALID: ['请输入 HTTPS 地址；本机服务可以使用 HTTP。', 'Use an HTTPS URL; HTTP is allowed for localhost.'],
@@ -84,16 +95,19 @@ To generate a report call sleep_report with a concise interpretation that separa
 If user requests direct report, stop questioning and create it using available information with limitations. Do not force configuration of EEG or SleepGPT. Do not claim medical accuracy. For concerning health symptoms recommend appropriate professional support without diagnosing.
 Never request, repeat or save an API key in conversation. Model configuration happens in settings only.`;
 
-export async function makeSession(home: string, config: ModelConfig, customTools: ToolDefinition[], sessionDir?: string, systemPrompt = SYSTEM_PROMPT): Promise<AgentSession> {
-  const validated = validateModelConfig(config);
+export async function makeSession(home: string, config: ModelConfig, customTools: ToolDefinition[], sessionDir?: string, systemPrompt = SYSTEM_PROMPT, nativeRuntime?: ModelRuntime): Promise<AgentSession> {
+  const validated = nativeRuntime ? config : validateModelConfig(config);
   const agentDir = join(home, 'pi');
   const cwd = join(home, 'workspace');
   mkdirSync(agentDir, { recursive: true }); mkdirSync(cwd, { recursive: true });
-  const modelsPath = join(agentDir, 'sleepclaw-models.json');
-  writeFileSync(modelsPath, JSON.stringify({ providers: { sleepclaw: { baseUrl: validated.baseUrl, api: validated.protocol, models: [{ id: validated.model, reasoning: false, input: ['text'], contextWindow: 128000, maxTokens: 4096, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }] } } }));
-  const runtime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath, modelsStorePath: join(agentDir, 'models-store.json'), allowModelNetwork: false });
-  await runtime.setRuntimeApiKey('sleepclaw', validated.apiKey!);
-  const model = runtime.getModel('sleepclaw', validated.model);
+  let runtime = nativeRuntime;
+  if (!runtime) {
+    const modelsPath = join(agentDir, 'sleepclaw-models.json');
+    writeFileSync(modelsPath, JSON.stringify({ providers: { sleepclaw: { baseUrl: validated.baseUrl, api: validated.protocol, models: [{ id: validated.model, reasoning: false, input: ['text'], contextWindow: 128000, maxTokens: 4096, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }] } } }));
+    runtime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath, modelsStorePath: join(agentDir, 'models-store.json'), allowModelNetwork: false });
+    await runtime.setRuntimeApiKey('sleepclaw', validated.apiKey!);
+  }
+  const model = runtime.getModel(nativeRuntime ? validated.provider : 'sleepclaw', validated.model);
   if (!model) throw new Error('MODEL_NOT_FOUND');
   const settings = SettingsManager.inMemory({ compaction: { enabled: true }, retry: { enabled: true, maxRetries: 2, baseDelayMs: 1000 } });
   const skillsFile = join(home, 'skills.json');
@@ -108,17 +122,17 @@ export async function makeSession(home: string, config: ModelConfig, customTools
   if (sessionDir) mkdirSync(sessionDir, { recursive: true });
   const { session } = await createAgentSession({ cwd, agentDir, model, modelRuntime: runtime, thinkingLevel: 'off', settingsManager: settings,
     noTools: 'builtin', customTools, resourceLoader: loader,
-    sessionManager: sessionDir ? SessionManager.continueRecent(cwd, sessionDir) : SessionManager.inMemory(cwd),
+    sessionManager: sessionDir ? openChatSession(cwd, sessionDir) : SessionManager.inMemory(cwd),
   });
   return session;
 }
 
-export async function testConnection(home: string, config: ModelConfig, signal?: AbortSignal): Promise<void> {
+export async function testConnection(home: string, config: ModelConfig, signal?: AbortSignal, nativeRuntime?: ModelRuntime): Promise<void> {
   if (signal?.aborted) throw new Error('CANCELLED');
   const nonce = randomUUID(); let calls = 0;
   const tool = defineTool({ name: 'sleepclaw_connection_test', label: 'Connection test', description: 'Return a synthetic connection check token; contains no personal data.', parameters: Type.Object({}),
     execute: async () => { calls++; return { content: [{ type: 'text', text: nonce }], details: {} }; }, });
-  const session = await makeSession(home, config, [tool], undefined, 'Test this model connection. Call sleepclaw_connection_test exactly once, then respond with its returned token. No other action.');
+  const session = await makeSession(home, config, [tool], undefined, 'Test this model connection. Call sleepclaw_connection_test exactly once, then respond with its returned token. No other action.', nativeRuntime);
   let timedOut = false;
   let turnLimitReached = false;
   const cancel = () => { void session.abort(); };
@@ -141,12 +155,6 @@ export async function testConnection(home: string, config: ModelConfig, signal?:
   } finally { clearTimeout(timeout); unsubscribe(); signal?.removeEventListener('abort', cancel); session.dispose(); }
 }
 
-export function chatMessages(session?: Pick<AgentSession, 'messages'>): ChatMessage[] {
-  if (!session) return [];
-  return session.messages.flatMap((message, i) => {
-    if (message.role !== 'assistant' && message.role !== 'user') return [];
-    const content = typeof message.content === 'string' ? message.content : message.content.filter(b => b.type === 'text').map(b => 'text' in b ? b.text : '').join('\n');
-    const text = content.replace(/\n<sleepclaw-current-context>[\s\S]*?<\/sleepclaw-current-context>/g, '');
-    return text ? [{ id: `pi-${i}`, role: message.role, text }] : [];
-  });
+export function chatMessages(session?: Pick<AgentSession, 'messages'> & Partial<Pick<AgentSession, 'sessionManager'>>, language: Language = 'zh'): ChatMessage[] {
+  return presentedChatMessages(session, language);
 }

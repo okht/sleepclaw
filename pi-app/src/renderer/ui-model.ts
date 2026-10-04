@@ -1,9 +1,20 @@
-import type { AppEvent, AppSnapshot, ChatMessage, Fact, Language, Report } from '../shared/types';
+import type { AppEvent, AppSnapshot, ChatMessage, Fact, Feedback, Language, Report } from '../shared/types';
 
 export function isSnapshot(value: unknown): value is AppSnapshot {
   if (!value || typeof value !== 'object') return false;
   const candidate = value as Partial<AppSnapshot>;
   return typeof candidate.configured === 'boolean' && Array.isArray(candidate.messages) && Array.isArray(candidate.investigations);
+}
+
+/** One task has one visible status/cancel surface. Import/auth work is not model streaming. */
+export function taskPresentation(state: Pick<AppSnapshot, 'busy' | 'task' | 'configured'>, { chatVisible }: { chatVisible: boolean }) {
+  const active = Boolean(state.busy && state.task);
+  const modelRunning = active && state.task?.kind === 'model' && state.configured;
+  return {
+    placement: !active ? 'none' as const : modelRunning && chatVisible ? 'composer' as const : 'global' as const,
+    modelRunning,
+    canCancel: active && Boolean(state.task?.cancellable),
+  };
 }
 
 export function visibleMessages(messages: ChatMessage[], delta: string, investigationId?: string): ChatMessage[] {
@@ -23,6 +34,30 @@ export function conversationFacts(facts: Fact[], investigationId?: string): Fact
 /** Keep uncertain wording visible, including an unknown answer with an original phrase. */
 export function factDisplayValue(fact: Fact, unknown: string): string {
   return fact.uncertainty?.original || (fact.status === 'unknown' ? unknown : String(fact.value ?? '—'));
+}
+
+export function latestReportFeedback(feedback: Feedback[], reportId: string): Feedback | undefined {
+  return feedback.reduce<Feedback | undefined>((latest, item) => item.reportId === reportId && (!latest || item.createdAt >= latest.createdAt) ? item : latest, undefined);
+}
+
+export function progressText(message: string, language: Language): string {
+  const labels: Record<string, [string, string]> = {
+    sleep_context: ['正在回看本次信息', 'Reviewing this sleep'],
+    sleep_fact: ['正在整理你补充的信息', 'Saving the information you shared'],
+    sleep_question: ['正在准备下一个问题', 'Preparing the next question'],
+    sleep_target: ['正在确认睡眠时段和来源', 'Confirming the sleep interval and source'],
+    sleep_data_query: ['正在核对选定的睡眠记录', 'Reviewing the selected sleep records'],
+    sleep_health_analysis: ['正在检查记录覆盖情况与缺口', 'Checking record coverage and gaps'],
+    sleep_report: ['正在整理报告', 'Preparing your report'],
+    sleep_feedback: ['正在保存你的反馈', 'Saving your feedback'],
+    sleep_plan: ['正在安排接下来的核对步骤', 'Planning the next checks'],
+    sleepclaw_connection_test: ['正在验证对话与工具调用', 'Checking conversation and tool support'],
+  };
+  if (labels[message]) return labels[message][language === 'zh' ? 0 : 1];
+  if (/^sleep_[a-z_]+$/.test(message)) return language === 'zh' ? '正在核对本次信息' : 'Reviewing this sleep';
+  const count = /^(?:Read\s+(\d+)\s+records|已读取\s*(\d+)\s*条记录)$/.exec(message);
+  if (count) return language === 'zh' ? `已读取 ${count[1] ?? count[2]} 条记录` : `Read ${count[1] ?? count[2]} records`;
+  return message;
 }
 
 export function orderedReports(reports: Report[], investigationId?: string): Report[] {
@@ -52,7 +87,7 @@ export function displayNumber(value: number | null): string {
   return value === null || !Number.isFinite(value) ? '—' : new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value);
 }
 
-const publicErrors = ['AUTH_FAILED', 'QUOTA', 'MODEL_NOT_FOUND', 'CANCELLED', 'TIMEOUT', 'TURN_LIMIT', 'NO_PENDING_FOLLOWUP', 'CONFIG_REQUIRED', 'CONFIG_INVALID', 'BASE_URL_INVALID', 'TOOL_TEST_FAILED', 'REPORT_NOT_SAVED', 'MODEL_REQUIRED', 'BUSY', 'TARGET_REQUIRED', 'SOURCE_REQUIRED', 'REPORT_NOT_FOUND', 'CREDENTIAL_STORAGE_UNAVAILABLE', 'WORKER_EXITED', 'NOT_READY'] as const;
+const publicErrors = ['AUTH_FAILED', 'AUTH_REQUIRED', 'AUTH_INPUT_REQUIRED', 'AUTH_INPUT_INVALID', 'AUTH_UNAVAILABLE', 'AUTH_BROWSER_FAILED', 'QUOTA', 'MODEL_NOT_FOUND', 'IMPORT_CANCELLED', 'CANCELLED', 'TIMEOUT', 'TURN_LIMIT', 'NO_PENDING_FOLLOWUP', 'QUESTION_ALREADY_ANSWERED', 'CONFIG_REQUIRED', 'CONFIG_INVALID', 'BASE_URL_INVALID', 'TOOL_TEST_FAILED', 'REPORT_NOT_SAVED', 'MODEL_REQUIRED', 'BUSY', 'TARGET_REQUIRED', 'SOURCE_REQUIRED', 'REPORT_NOT_FOUND', 'CREDENTIAL_STORAGE_UNAVAILABLE', 'WORKER_EXITED', 'NOT_READY'] as const;
 export function errorKey(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error);
   return `error_${publicErrors.find((code) => new RegExp(`\\b${code}\\b`).test(text)) || 'REQUEST_FAILED'}`;

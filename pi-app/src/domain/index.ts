@@ -4,7 +4,7 @@ import { mkdirSync, writeFileSync, renameSync, rmSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { analyzeRecords, identifyCandidates, importAppleHealth } from '../health/index.js';
 import type { Analysis, DomainSnapshot, Fact, FactInput, FactValue, Feedback, HealthRecord, ImportSummary, Investigation, InvestigationPlan, InvestigationPlanInput, Language, Question, Report, SleepScope } from '../shared/types.js';
-import { questionDefinitions } from './questions.js';
+import { collectionProgress, questionDefinitions } from './questions.js';
 import { buildTimeline, renderReport, reportContent } from './report.js';
 import { validateFactUncertainty, validateInvestigationPlan } from './investigation.js';
 import { canonicalFactTopic, normalizeFactInput } from '../shared/fact-contract.js';
@@ -101,7 +101,7 @@ export class SleepStore {
     return value;
   }
   private rows<T>(table: 'investigations' | 'imports' | 'reports' | 'feedback'): T[] {
-    return this.db.prepare(`SELECT data FROM ${table}`).all().map(row => parse<T>(row) as T);
+    return this.db.prepare(`SELECT data FROM ${table}${table === 'feedback' ? ' ORDER BY id' : ''}`).all().map(row => parse<T>(row) as T);
   }
   private saveInvestigation(value: Investigation): void {
     this.db.prepare('INSERT INTO investigations (id,data) VALUES (?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data').run(value.id, JSON.stringify(value));
@@ -155,7 +155,11 @@ export class SleepStore {
     const candidateRecords = this.db.prepare("SELECT r.data FROM health_records r WHERE r.type='sleep' AND EXISTS (SELECT 1 FROM import_records ir JOIN imports i ON i.id=ir.import_id WHERE ir.record_id=r.id) ORDER BY r.start DESC LIMIT 5000").all().map(row => parse<HealthRecord>(row) as HealthRecord);
     const candidates = identifyCandidates(candidateRecords).sort((a, b) => b.start.localeCompare(a.start)).slice(0, 100);
     const canResume = Boolean(active && !active.pendingQuestion && (active.pausedQuestion || questionDefinitions(active.language).some(q => !facts.some(f => f.scope === q.scope && f.topic === q.topic))));
-    return { investigations, active, facts, imports: this.rows<ImportSummary>('imports'), candidates, reports, feedback: this.rows<Feedback>('feedback'), question: active?.pendingQuestion, canResume };
+    const hasCurrentReport = Boolean(active && reports.some(report => report.investigationId === active.id
+      && (report.sleepEpisodeId ?? report.investigationId) === (active.sleepEpisodeId ?? active.id)
+      && report.status === 'complete' && report.factRevision === active.revision));
+    return { investigations, active, facts, imports: this.rows<ImportSummary>('imports'), candidates, reports, feedback: this.rows<Feedback>('feedback'), question: active?.pendingQuestion, canResume,
+      collectionProgress: active ? collectionProgress(active, facts, hasCurrentReport) : undefined };
   }
 
   createInvestigation(goal: string, language: Language, scope: SleepScope = 'main'): Investigation {
@@ -358,7 +362,10 @@ export class SleepStore {
     const timeline = buildTimeline(records, investigation);
     const content = { ...reportContent(investigation, this.factsFor(id), analysis, this.rows<Feedback>('feedback'), aiInterpretation, aiAction, previousReports), timeline: timeline.timeline };
     if (timeline.truncated) content.limitations.push(investigation.language === 'zh' ? '时间线较长，仅展示前 200 段；指标仍基于全部选定记录计算。' : 'The timeline is long; only its first 200 segments are shown. Metrics still use all selected records.');
-    const unchanged = existing.find(report => report.status === 'complete' && Object.entries(content).every(([key, value]) => JSON.stringify(report[key as keyof Report]) === JSON.stringify(value)));
+    const latest = existing.reduce<Report | undefined>((selected, report) => !selected || report.revision > selected.revision ? report : selected, undefined);
+    // Returning to an earlier action after updated feedback is a new current
+    // revision. Only repeating the latest content may reuse a previous report.
+    const unchanged = latest?.status === 'complete' && Object.entries(content).every(([key, value]) => JSON.stringify(latest[key as keyof Report]) === JSON.stringify(value)) ? latest : undefined;
     if (unchanged) { this.savePausedCollection(investigation); this.exportReport(unchanged); return unchanged; }
     const report: Report = { id: randomUUID(), revision: existing.reduce((max, r) => Math.max(max, r.revision), 0) + 1, createdAt: iso(), ...content, markdown: '' };
     report.markdown = renderReport(report);

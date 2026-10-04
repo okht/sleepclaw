@@ -6,7 +6,8 @@ import { buildInvestigationGuidance } from './domain/investigation.js';
 import { analyzeRecords } from './health/index.js';
 import { analyzeHealthEvidence, parseZonedTimestamp } from './health/evidence.js';
 import { reportsForEpisode } from './shared/episode.js';
-import { FACT_CONTRACT_GUIDANCE } from './shared/fact-contract.js';
+import { canonicalFactTopic, FACT_CONTRACT_GUIDANCE } from './shared/fact-contract.js';
+import { questionDefinitions } from './domain/questions.js';
 
 const text = (maxLength = 4000) => Type.String({ minLength: 1, maxLength });
 const scope = Type.Union([Type.Literal('profile'), Type.Literal('sleep')]);
@@ -61,9 +62,18 @@ export function createSleepTools(store: SleepStore, options: { investigationId?:
       store.resumeCollection(id);
       return sleepContext(store, id);
     }),
-    tool('sleep_question', 'One follow-up', 'Persist one useful next question before asking it, with a short reason. Do not ask for already known information or block a direct report.', {
+    tool('sleep_question', 'One follow-up', 'Persist one useful next question before asking it. Already known or skipped topics require a specific reason explaining what new distinction needs clarification; do not repeat a question or reuse its generic questionnaire reason. Respect skipped answers and direct report requests.', {
       topic: text(101), text: text(), reason: Type.Optional(text()), scope,
-    }, false, (params, id) => store.saveQuestion(id, { id: randomUUID(), ...params })),
+    }, false, (params, id) => {
+      const topic = canonicalFactTopic(params.topic, params.scope);
+      const answered = store.snapshot(id).facts.some(fact => fact.scope === params.scope && fact.topic === topic);
+      if (answered) {
+        const reason = params.reason?.trim() ?? '';
+        const generic = [...questionDefinitions('zh'), ...questionDefinitions('en')].some(question => question.reason === reason);
+        if (reason.length < 8 || (reason.match(/\p{L}/gu)?.length ?? 0) < 4 || reason === params.text.trim() || generic || /^(?:clarify|clarification|confirm|confirmation|need more info|more information|to understand better|补充信息|进一步了解|需要确认|需要澄清)[.!。！]*$/i.test(reason)) throw new Error('QUESTION_ALREADY_ANSWERED');
+      }
+      return store.saveQuestion(id, { id: randomUUID(), ...params, topic });
+    }),
     tool('sleep_target', 'Select sleep', 'Set episode and source only after the user explicitly selects or unambiguously identifies them. Time strings must include a timezone. Never silently select the newest episode. When sleepEpisodeId changes, read sleep_context again and use only its current facts; another episode\'s statements need explicit user confirmation.', {
       start: text(80), end: text(80), source: text(500), scope: Type.Optional(sleepScope),
     }, false, (params, id) => {
@@ -146,11 +156,12 @@ export function sleepContext(store: SleepStore, investigationId?: string): unkno
   };
 }
 
-const SAFE_CODES = new Set(['INVALID_TOOL_ARGUMENTS', 'UNKNOWN_TOOL', 'CANCELLED', 'BUSY', 'EPISODE_CHANGED', 'TARGET_REQUIRED', 'TIMEZONE_REQUIRED', 'INVALID_QUERY_RANGE', 'PLAN_STALE', 'INVALID_PLAN', 'INVALID_FACT_UNCERTAINTY', 'INVALID_FACT', 'INVALID_FACT_STATUS', 'INVALID_FACT_VALUE', 'FACT_TOO_LONG', 'INVESTIGATION_NOT_FOUND', 'INVALID_GOAL', 'INVALID_INVESTIGATION', 'INVALID_QUESTION', 'INVALID_TARGET', 'INVALID_SCOPE', 'INVALID_TIME_RANGE', 'INVALID_DATE', 'QUERY_TOO_LARGE_NARROW_TIME_RANGE', 'REPORT_NOT_FOUND', 'INVALID_FEEDBACK', 'REPORT_TEXT_TOO_LONG', 'IMPORT_CANCELLED', 'IMPORT_IN_PROGRESS']);
+const SAFE_CODES = new Set(['INVALID_TOOL_ARGUMENTS', 'UNKNOWN_TOOL', 'CANCELLED', 'BUSY', 'EPISODE_CHANGED', 'TARGET_REQUIRED', 'TIMEZONE_REQUIRED', 'INVALID_QUERY_RANGE', 'PLAN_STALE', 'INVALID_PLAN', 'INVALID_FACT_UNCERTAINTY', 'INVALID_FACT', 'INVALID_FACT_STATUS', 'INVALID_FACT_VALUE', 'FACT_TOO_LONG', 'INVESTIGATION_NOT_FOUND', 'INVALID_GOAL', 'INVALID_INVESTIGATION', 'INVALID_QUESTION', 'QUESTION_ALREADY_ANSWERED', 'INVALID_TARGET', 'INVALID_SCOPE', 'INVALID_TIME_RANGE', 'INVALID_DATE', 'QUERY_TOO_LARGE_NARROW_TIME_RANGE', 'REPORT_NOT_FOUND', 'INVALID_FEEDBACK', 'REPORT_TEXT_TOO_LONG', 'IMPORT_CANCELLED', 'IMPORT_IN_PROGRESS']);
 export function safeToolError(error: unknown) {
   const message = error instanceof Error && error.name === 'AbortError' ? 'CANCELLED' : error instanceof Error ? error.message : '';
   const code = SAFE_CODES.has(message) ? message : 'TOOL_FAILED';
   const hints: Record<string, string> = {
+    QUESTION_ALREADY_ANSWERED: 'This topic already has a known or skipped answer. Use the saved fact. Ask again only for a necessary new distinction with a specific reason, and do not repeat the generic questionnaire purpose.',
     EPISODE_CHANGED: 'The selected sleep changed. Start a fresh episode session and read sleep_context before continuing; never write facts from the previous episode.',
     PLAN_STALE: 'Read sleep_context and refresh the plan using its current revision.',
     TARGET_REQUIRED: 'Ask one question to select the episode and source; a self-report report is still available.',

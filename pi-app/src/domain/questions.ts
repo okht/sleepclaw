@@ -1,4 +1,5 @@
-import type { Question, Language } from '../shared/types.js';
+import type { CollectionProgress, Fact, Investigation, Question, Language } from '../shared/types.js';
+import { canonicalFactTopic } from '../shared/fact-contract.js';
 
 type QuestionDefinition = { topic: string; scope: 'profile' | 'sleep'; zh: string; en: string; reasonZh: string; reasonEn: string };
 
@@ -23,4 +24,26 @@ const questions: QuestionDefinition[] = [
 
 export function questionDefinitions(language: Language): Array<Omit<Question, 'id'>> {
   return questions.map(q => ({ topic: q.topic, scope: q.scope, text: language === 'zh' ? q.zh : q.en, reason: language === 'zh' ? q.reasonZh : q.reasonEn }));
+}
+
+/** Facts must be the store's current episode/profile projection, with legacy conflicts resolved. */
+export function collectionProgress(investigation: Investigation, facts: readonly Fact[], hasCurrentReport: boolean): CollectionProgress {
+  const key = (item: Pick<Question, 'scope' | 'topic'>) => `${item.scope}:${canonicalFactTopic(item.topic, item.scope)}`;
+  const answers = new Map(facts.map(fact => [key(fact), fact]));
+  const basicKeys = new Set(questions.map(key));
+  let known = 0, skipped = 0;
+  for (const topic of basicKeys) {
+    const answer = answers.get(topic);
+    if (answer?.status === 'known') known++;
+    else if (answer?.status === 'unknown') skipped++;
+  }
+  const total = basicKeys.size, completed = known + skipped, remaining = total - completed;
+  let phase: CollectionProgress['phase'];
+  if (investigation.pendingQuestion) {
+    const pending = key(investigation.pendingQuestion);
+    phase = basicKeys.has(pending) && !answers.has(pending) ? 'basics' : 'followup';
+  } else if (investigation.pausedQuestion || (investigation.status === 'reported' && remaining > 0)) phase = 'paused';
+  else if (investigation.status === 'reported' && hasCurrentReport) phase = 'reported';
+  else phase = remaining > 0 ? 'basics' : 'ready';
+  return { total, completed, known, skipped, remaining, phase };
 }

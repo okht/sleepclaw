@@ -9,6 +9,7 @@ import '@fontsource-variable/noto-sans-sc/index.css';
 import './assets/typography.css';
 import './assets/tokens.css';
 import './styles.css';
+import './markdown.css';
 
 const root = document.getElementById('root');
 if (!root) throw new Error('SleepClaw root element is missing');

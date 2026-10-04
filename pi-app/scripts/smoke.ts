@@ -1,5 +1,5 @@
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createServer, type ServerResponse } from 'node:http';
 import assert from 'node:assert/strict';
@@ -39,8 +39,8 @@ function resourceFileCount(directory: string): number {
 
 const smokeRoot = resolve('.smoke'); mkdirSync(smokeRoot, { recursive: true });
 const home = mkdtempSync(join(smokeRoot, 'packaged-'));
-const executable = resolve('out/SleepClaw-win32-x64/sleepclaw.exe');
-const resources = resolve('out/SleepClaw-win32-x64/resources');
+const executable = resolve(process.env.SLEEPCLAW_SMOKE_EXECUTABLE || 'out/SleepClaw-win32-x64/sleepclaw.exe');
+const resources = join(dirname(executable), 'resources');
 assert.ok(statSync(join(resources, 'runtime.asar')).isFile(), 'Packaged runtime.asar is required.');
 assert.ok(statSync(join(resources, 'runtime.asar')).size > 0, 'Packaged runtime.asar must not be empty.');
 const resourceFiles = resourceFileCount(resources);
@@ -95,7 +95,8 @@ try {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/(?:API.?KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|(?:^|_)PROXY$|^NODE_OPTIONS$|^ELECTRON_RUN_AS_NODE$)/i.test(key)));
   child = spawn(executable, [], {
     windowsHide: true,
-    env: { ...env, SLEEPCLAW_HOME: home, SLEEPCLAW_SMOKE: '1', SLEEPCLAW_SMOKE_MODEL_URL: `http://127.0.0.1:${address.port}/v1` },
+    // Use a separate Electron userData/instance lock as well as synthetic app data.
+    env: { ...env, SLEEPCLAW_HOME: home, SLEEPCLAW_UI_TEST: '1', SLEEPCLAW_SMOKE: '1', SLEEPCLAW_SMOKE_MODEL_URL: `http://127.0.0.1:${address.port}/v1` },
     stdio: 'ignore',
   });
   const code = await new Promise<number | null>((resolveExit, reject) => {

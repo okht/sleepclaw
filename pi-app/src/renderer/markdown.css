@@ -1,0 +1,25 @@
+.markdown-text { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+.markdown-text > :first-child { margin-top: 0; }
+.markdown-text > :last-child { margin-bottom: 0; }
+.markdown-text p { margin: .7em 0; }
+.markdown-text :is(h1, h2, h3, h4, h5, h6) { margin: 1.15em 0 .45em; font-weight: 650; line-height: 1.5; letter-spacing: 0; }
+.markdown-text h1 { font-size: 1.3em; }
+.markdown-text h2 { font-size: 1.2em; }
+.markdown-text h3 { font-size: 1.1em; }
+.markdown-text :is(h4, h5, h6) { font-size: 1em; }
+.markdown-text strong { font-weight: 700; }
+.markdown-text :is(ul, ol) { margin: .65em 0; padding-inline-start: 1.6em; }
+.markdown-text li { padding-inline-start: .15em; margin: .3em 0; }
+.markdown-text li > p { margin: .35em 0; }
+.markdown-text li > :is(ul, ol) { margin: .25em 0; }
+.markdown-text blockquote { margin: .85em 0; padding: .15em 0 .15em 1em; border-inline-start: 3px solid var(--line); color: var(--muted); }
+.markdown-text code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: .9em; background: var(--inset); padding: .12em .35em; border-radius: 4px; }
+.markdown-text pre { max-width: 100%; overflow-x: auto; margin: .85em 0; padding: .85em 1em; border: 1px solid var(--line); border-radius: 9px; background: var(--inset); white-space: pre; line-height: 1.6; }
+.markdown-text pre code { background: none; padding: 0; border-radius: 0; overflow-wrap: normal; }
+.markdown-text hr { margin: 1em 0; border: 0; border-top: 1px solid var(--line); }
+.markdown-text table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; margin: .85em 0; font-size: .95em; }
+.markdown-text :is(th, td) { padding: .45em .7em; border: 1px solid var(--line); text-align: start; }
+.markdown-text th { font-weight: 650; background: var(--inset); }
+.markdown-text .task-list-item { list-style: none; }
+.markdown-text input[type="checkbox"] { width: auto; margin-inline: -1.3em .55em; padding: 0; accent-color: var(--accent); vertical-align: middle; }
+.markdown-image-description { color: var(--muted); font-style: italic; }

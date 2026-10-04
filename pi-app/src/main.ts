@@ -1,12 +1,13 @@
 import { app, BrowserWindow, dialog, ipcMain, safeStorage, shell, utilityProcess, type UtilityProcess } from 'electron';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, rmSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { readCredentialPayload, serializeCredentialPayload } from './credentials';
 import { planSquirrelStartup, runSquirrelStartup } from './squirrel-startup';
 import { parseWindowTheme, titleBarOverlay, windowChromeOptions } from './window-chrome';
 import { uiTestUserDataPath } from './ui-test-isolation';
+import { readSubscriptionCredential, serializeSubscriptionCredential, subscriptionLoginUrl } from './subscription-credentials';
 import type { AppSnapshot, ModelConfig } from './shared/types';
 declare const MAIN_WINDOW_WEBPACK_ENTRY: string;
 declare const MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY: string;
@@ -47,12 +48,12 @@ function sendToWindow(channel: string, value: unknown): void {
   if (window && !window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send(channel, value);
 }
 const pending = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }>();
-const allowed = new Set(['state','language','configure','new','select','import','target','answer','resume','continueLocal','continueWithModel','retryFollowup','fact','send','report','reportLocal','feedback','delete','deleteImport','deleteFact','cancel']);
+const allowed = new Set(['state','language','configure','loginSubscription','configureSubscription','logoutSubscription','submitSubscriptionCode','openSubscriptionLogin','new','select','import','target','answer','resume','continueLocal','continueWithModel','retryFollowup','fact','send','report','reportLocal','feedback','delete','deleteImport','deleteFact','cancel']);
 function request(method: string, params?: Record<string, unknown>): Promise<unknown> {
   return new Promise((resolvePromise, reject) => {
     if (!worker) return reject(new Error('NOT_READY'));
     const id = randomUUID();
-    const timer = setTimeout(() => { pending.delete(id); reject(new Error('TIMEOUT')); }, method === 'import' ? 600_000 : 150_000);
+    const timer = setTimeout(() => { pending.delete(id); reject(new Error('TIMEOUT')); }, method === 'import' ? 600_000 : method === 'loginSubscription' ? 360_000 : 150_000);
     pending.set(id, { resolve: resolvePromise, reject, timer }); worker.postMessage({ id, method, params });
   });
 }
@@ -62,22 +63,48 @@ app.on('second-instance', () => { window?.show(); window?.focus(); });
 app.whenReady().then(async () => {
   mkdirSync(home, { recursive: true });
   const credentialFile = join(home, 'credentials.bin');
+  const subscriptionFile = join(home, 'chatgpt-auth.bin');
+  let subscriptionCredential;
+  if (existsSync(subscriptionFile) && safeStorage.isEncryptionAvailable()) {
+    try { subscriptionCredential = readSubscriptionCredential(safeStorage.decryptString(readFileSync(subscriptionFile))); }
+    catch { /* A corrupt OS-encrypted credential requires a fresh sign-in. */ }
+  }
   let apiKey: string | undefined;
   let credentialReconnectRequired = false;
+  let apiCredentialInactive = false;
   if (existsSync(credentialFile)) {
     if (safeStorage.isEncryptionAvailable()) {
       try {
         const saved = JSON.parse(readFileSync(join(home, 'settings.json'), 'utf8')) as { model?: Omit<ModelConfig, 'apiKey'> };
-        apiKey = readCredentialPayload(safeStorage.decryptString(readFileSync(credentialFile)), saved.model);
+        if (saved.model?.authMode !== 'chatgpt') apiKey = readCredentialPayload(safeStorage.decryptString(readFileSync(credentialFile)), saved.model);
+        else apiCredentialInactive = true;
       } catch { /* Ask user to reconnect; never print credentials or decrypted payloads. */ }
     }
-    credentialReconnectRequired = !apiKey;
+    credentialReconnectRequired = !apiKey && !apiCredentialInactive;
   }
   const runtime = app.isPackaged ? join(process.resourcesPath, 'runtime.asar') : resolve(__dirname, '..', '..', 'runtime');
   worker = utilityProcess.fork(join(runtime, 'worker.mjs'), [], { serviceName: 'SleepClaw Agent', stdio: 'pipe' });
   // Upstream provider diagnostics can contain response fragments. Drain without persisting or forwarding them.
   worker.stdout?.resume(); worker.stderr?.resume();
-  worker.on('message', (message: { id?: string; value?: unknown; error?: string; event?: unknown }) => {
+  worker.on('message', (message: { id?: string; value?: unknown; error?: string; event?: unknown; subscriptionBrowser?: string; credentialUpdate?: { id: string; credential?: unknown } }) => {
+    // Credentials are private worker traffic and must never be forwarded to webContents.
+    if (message.credentialUpdate) {
+      const update = message.credentialUpdate;
+      try {
+        if (update.credential) {
+          if (!safeStorage.isEncryptionAvailable()) throw new Error();
+          const encrypted = safeStorage.encryptString(serializeSubscriptionCredential(update.credential));
+          writeFileSync(`${subscriptionFile}.tmp`, encrypted); renameSync(`${subscriptionFile}.tmp`, subscriptionFile);
+        } else { rmSync(`${subscriptionFile}.tmp`, { force: true }); rmSync(subscriptionFile, { force: true }); }
+        worker?.postMessage({ credentialAckId: update.id, ok: true });
+      } catch { worker?.postMessage({ credentialAckId: update.id, ok: false }); }
+      return;
+    }
+    if (message.subscriptionBrowser) {
+      try { void shell.openExternal(subscriptionLoginUrl(message.subscriptionBrowser)).catch(() => sendToWindow('sleepclaw:event', { type: 'error', code: 'AUTH_BROWSER_FAILED', message: 'Open the sign-in page again. / 请重新打开登录页面。' })); }
+      catch { /* Do not open arbitrary URLs from provider events. */ }
+      return;
+    }
     if (message.event) sendToWindow('sleepclaw:event', message.event);
     if (message.id) { const entry = pending.get(message.id); if (!entry) return; clearTimeout(entry.timer); pending.delete(message.id); message.error ? entry.reject(new Error(message.error)) : entry.resolve(message.value); }
   });
@@ -86,7 +113,7 @@ app.whenReady().then(async () => {
     for (const item of pending.values()) { clearTimeout(item.timer); item.reject(new Error('WORKER_EXITED')); } pending.clear();
     sendToWindow('sleepclaw:event', { type: 'error', code: 'WORKER_EXITED', message: 'SleepClaw needs to restart. Saved data is retained. / 请重新打开，已保存的数据会保留。' });
   });
-  const state = await request('boot', { home, apiKey }) as AppSnapshot;
+  const state = await request('boot', { home, apiKey, subscriptionCredential }) as AppSnapshot;
   if (smoke) {
     const modelUrl = process.env.SLEEPCLAW_SMOKE_MODEL_URL;
     if (modelUrl) {
@@ -132,7 +159,7 @@ app.whenReady().then(async () => {
     if (method === 'openReports') return shell.openPath(join(home, 'reports'));
     if (method === 'openNotices') return shell.openPath(app.isPackaged ? join(process.resourcesPath, 'NOTICE.md') : resolve(__dirname, '..', '..', 'NOTICE.md'));
     if (!allowed.has(method)) throw new Error('UNKNOWN_METHOD');
-    if (method === 'configure' && !safeStorage.isEncryptionAvailable()) throw new Error('CREDENTIAL_STORAGE_UNAVAILABLE');
+    if (['configure', 'loginSubscription'].includes(method) && !safeStorage.isEncryptionAvailable()) throw new Error('CREDENTIAL_STORAGE_UNAVAILABLE');
     const value = await request(method, params);
     if (method === 'configure') {
       try {

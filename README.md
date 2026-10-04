@@ -56,7 +56,7 @@ npm ci
 npm start
 ```
 
-On first launch, choose local use or connect a model in the app's settings. The desktop supports OpenAI-compatible and Anthropic Messages services. AI features require your own compatible model service and API key.
+On first launch, choose local use or connect a model in the app's settings. Sign in with your ChatGPT subscription through Pi's native OAuth, or use an API key for OpenAI-compatible and Anthropic Messages services. Subscription models and limits depend on your account. Complete authorization in your browser; the connection panel also accepts the full callback URL if automatic return fails.
 
 This repository provides source and demos. A verified public installer is not available here; development builds are unsigned.
 
@@ -127,7 +127,7 @@ Electron handles the desktop, React and assistant-ui render the interface, Pi ma
 
 Apple Health archives are parsed locally. SleepClaw leaves your original files unchanged and does not upload the full health export to a model.
 
-- **On your computer:** profiles, imported records, investigations, reports, and desktop Pi sessions. Health data is currently unencrypted; desktop API keys are protected by Electron safeStorage.
+- **On your computer:** profiles, imported records, investigations, reports, and desktop Pi sessions. Health data is currently unencrypted; desktop API keys and ChatGPT OAuth credentials are protected by Electron safeStorage. Subscription sign-out removes this app's credentials while retaining sleep data.
 - **With a model connected:** relevant facts, chat content, and tool results are sent to the service you configure. Plugin tool results enter the host conversation and may be sent to its model provider.
 - **When deleting a desktop analysis:** its answers, reports, feedback, and session are removed. Shared imports and your profile are managed separately. The plugin currently has no delete tool.
 - **Background services:** no telemetry, automatic health sync, or automatic updates are enabled.

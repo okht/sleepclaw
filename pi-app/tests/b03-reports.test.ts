@@ -81,11 +81,16 @@ for (const language of ['zh', 'en'] as const) {
     await i18n.changeLanguage(language);
     const a = investigation('A'), b = investigation('B');
     const own = report('OWN_B', b), foreign = report('FOREIGN_A', a);
-    const state = { ...snapshot(b, [own, foreign]), language, feedback: [{ reportId: foreign.id, choice: 'accepted' as const, createdAt: first.start }] };
-    const savedText = language === 'zh' ? /反馈已保存/ : /Your feedback is saved/;
+    const state = { ...snapshot(b, [own, foreign]), language, feedback: [{ reportId: foreign.id, choice: 'accepted' as const, note: 'FOREIGN_FEEDBACK_NOTE', createdAt: first.start }] };
+    const savedText = language === 'zh' ? /已保存的反馈：我愿意试试/ : /Saved response: I’ll try it/;
     assert.doesNotMatch(panel(state), savedText);
-    state.feedback.push({ reportId: own.id, choice: 'accepted', createdAt: first.start });
-    assert.match(panel(state), savedText);
+    assert.doesNotMatch(panel(state), /FOREIGN_FEEDBACK_NOTE|aria-pressed="true"/);
+    state.feedback.push({ reportId: own.id, choice: 'accepted', note: 'OWN_FEEDBACK_NOTE', createdAt: first.start });
+    const html = panel(state);
+    assert.match(html, savedText);
+    assert.match(html, /OWN_FEEDBACK_NOTE/);
+    assert.doesNotMatch(html, /FOREIGN_FEEDBACK_NOTE/);
+    assert.equal((html.match(/aria-pressed="true"/g) ?? []).length, 1);
   });
 }
 

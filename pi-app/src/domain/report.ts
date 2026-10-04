@@ -1,5 +1,37 @@
 import type { Analysis, Fact, Feedback, HealthRecord, Investigation, Metric, Report } from '../shared/types.js';
 import { factTopicLabel } from '../shared/fact-contract.js';
+import { reportsForEpisode } from '../shared/episode.js';
+
+const defaultActions = {
+  zh: '下一次醒来时，记下大概睡了多久，以及醒后的恢复感。下次分析先对照这两项，再决定是否需要改变习惯。',
+  en: 'After your next sleep, note its approximate duration and how refreshed you feel. Compare those two observations before deciding whether to change a habit.',
+};
+const fallbackActions = {
+  zh: '先不重复上次的建议。下一次醒来时，用一句话记录恢复感；你可以随时告诉我哪些做法不方便。',
+  en: 'We will not repeat a declined suggestion. After your next sleep, note how refreshed you feel in one sentence, and tell us what is impractical.',
+};
+const normalizedAction = (action: string) => action.trim().replace(/\s+/g, ' ').toLowerCase();
+function actionKey(action: string): string {
+  const normalized = normalizedAction(action);
+  if (Object.values(defaultActions).some(value => normalizedAction(value) === normalized)) return 'builtin:default';
+  if (Object.values(fallbackActions).some(value => normalizedAction(value) === normalized)) return 'builtin:fallback';
+  return `custom:${normalized}`;
+}
+function selectAction(investigation: Investigation, feedback: Feedback[], previousReports: Report[], proposed?: string): string {
+  const reports = new Map(reportsForEpisode(previousReports, investigation).map(report => [report.id, report]));
+  const latest = new Map<string, Feedback['choice']>();
+  // Feedback is supplied in persisted insertion order. A later update wins even
+  // when it was submitted against an older report containing the same action.
+  for (const item of feedback) {
+    const report = reports.get(item.reportId);
+    if (report?.action.trim()) latest.set(actionKey(report.action), item.choice);
+  }
+  const declined = (action: string) => ['cannot', 'unhelpful', 'later'].includes(latest.get(actionKey(action)) ?? '');
+  const primary = proposed?.trim() || defaultActions[investigation.language];
+  if (!declined(primary)) return primary;
+  const fallback = fallbackActions[investigation.language];
+  return declined(fallback) ? '' : fallback;
+}
 
 function numberFact(facts: Fact[], topic: string): number | undefined {
   const fact = facts.find(f => f.scope === 'sleep' && f.topic === topic && f.status === 'known');
@@ -67,14 +99,7 @@ export function reportContent(investigation: Investigation, facts: Fact[], analy
   }
   if (facts.some(f => f.status === 'unknown')) limitations.push(zh ? '部分问题已跳过或回答未知，相关判断仍有限。' : 'Some answers were skipped or unknown, which limits related interpretations.');
   if (aiInterpretation || aiAction) limitations.push(zh ? 'AI 生成的解释和建议可能存在错误，请结合原始记录和自身感受判断。' : 'AI-generated interpretations and suggestions may be wrong. Consider the original records and your own experience.');
-  const defaultAction = zh ? '下一次醒来时，记下大概睡了多久，以及醒后的恢复感。下次分析先对照这两项，再决定是否需要改变习惯。' : 'After your next sleep, note its approximate duration and how refreshed you feel. Compare those two observations before deciding whether to change a habit.';
-  const proposedAction = aiAction?.trim() || defaultAction;
-  const latestFeedback = new Map(feedback.map(item => [item.reportId, item]));
-  // Feedback is meaningful only for its linked action, not every future suggestion.
-  const declined = previousReports.some(report => report.action === proposedAction && ['cannot', 'unhelpful', 'later'].includes(latestFeedback.get(report.id)?.choice ?? ''));
-  const action = declined
-    ? (zh ? '先不重复上次的建议。下一次醒来时，用一句话记录恢复感；你可以随时告诉我哪些做法不方便。' : 'We will not repeat a declined suggestion. After your next sleep, note how refreshed you feel in one sentence, and tell us what is impractical.')
-    : proposedAction;
+  const action = selectAction(investigation, feedback, previousReports, aiAction);
   const scope = investigation.scope === 'nap' ? (zh ? '小睡' : 'nap') : investigation.scope === 'segment' ? (zh ? '睡眠片段' : 'sleep segment') : (zh ? '本次睡眠' : 'sleep');
   const summary = duration
     ? (zh ? `${scope}有 ${duration.value} 分钟的时长记录。先结合你的恢复感和记录覆盖情况理解，暂不根据单一数字判断睡得好坏。` : `This ${scope} has ${duration.value} recorded sleep minutes. Consider your recovery and data coverage before judging overall sleep quality.`)
@@ -162,7 +187,7 @@ export function renderReport(report: Omit<Report, 'markdown'>): string {
     ] : []),
     ...((report.timeline?.length ?? 0) > 0 ? [`## ${zh ? '记录时间线' : 'Recorded timeline'}`, '', zh ? '时间包含时区；空白间隔代表缺少记录，无法据此判断清醒。' : 'Times include a timezone. Gaps mean missing records and do not establish wakefulness.', '', zh ? '| 开始 | 结束 | 阶段 |' : '| Start | End | Stage |', '| --- | --- | --- |', ...report.timeline!.map(item => `| ${item.start} | ${item.end} | ${stageLabels[item.stage] ?? escapeCell(item.stage)} |`), ''] : []),
     ...(report.aiInterpretation ? [`## ${zh ? 'AI 解读' : 'AI interpretation'}`, '', zh ? '以下解释由模型生成，可能存在错误；请结合记录与自身感受判断。' : 'The following interpretation is AI-generated and may be wrong. Consider the records and your own experience.', '', report.aiInterpretation, ''] : []),
-    `## ${zh ? '今晚最值得做的一件事' : 'One next action'}`, '', report.action, '',
+    `## ${zh ? '今晚最值得做的一件事' : 'One next action'}`, '', report.action || (zh ? '暂不新增行动建议。你可以保留这份记录，或补充实际限制后再生成建议。' : 'No new action is suggested for now. You may keep this record or share practical constraints before generating another suggestion.'), '',
     `## ${zh ? '分析局限' : 'Limitations'}`, '', ...report.limitations.map(l => `- ${l}`), '',
   ].join('\n');
 }

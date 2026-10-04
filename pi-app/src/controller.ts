@@ -1,16 +1,19 @@
 import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync, rmSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { defineTool, SessionManager, type AgentSession } from '@earendil-works/pi-coding-agent';
 import { SleepStore } from './domain/index';
-import { createSleepTools, sleepContext } from './tools';
+import { createSleepTools, safeToolError, sleepContext } from './tools';
 import { reportsForEpisode } from './shared/episode';
-import { makeSession, testConnection, validateModelConfig, chatMessages, publicError } from './agent';
-import type { AppSnapshot, AppEvent, AppNotice, ModelConfig, Language, FactValue, SleepScope, Feedback, Investigation } from './shared/types';
+import { makeSession, testConnection, validateModelConfig, chatMessages, publicError, openChatSession, recordChatAction, recordPromptPresentation, type ChatAction } from './agent';
+import { SubscriptionService } from './subscription';
+import { SUBSCRIPTION_PROVIDER } from './subscription-credentials';
+import type { AppSnapshot, AppEvent, AppNotice, AppTask, ModelConfig, Language, FactValue, SleepScope, Feedback, Investigation } from './shared/types';
 
 const result = (value: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(value) }], details: {} });
 interface SavedWorkflow { episodeId: string; localCollection?: boolean; notice?: AppNotice; revision?: number; questionId?: string }
-interface SavedSettings { language: Language; activeId?: string; model?: Omit<ModelConfig, 'apiKey'>; workflows?: Record<string, SavedWorkflow> }
-const MODEL_FAILURES = new Set(['AUTH_FAILED', 'QUOTA', 'TIMEOUT', 'TURN_LIMIT', 'MODEL_NOT_FOUND', 'MODEL_REQUIRED', 'REQUEST_FAILED']);
+interface SavedSettings { language: Language; activeId?: string; model?: Omit<ModelConfig, 'apiKey'>; workflows?: Record<string, SavedWorkflow>; subscriptionDeviceId?: string }
+const MODEL_FAILURES = new Set(['AUTH_FAILED', 'AUTH_REQUIRED', 'QUOTA', 'TIMEOUT', 'TURN_LIMIT', 'MODEL_NOT_FOUND', 'MODEL_REQUIRED', 'REQUEST_FAILED']);
 
 export class SleepApp {
   readonly store: SleepStore;
@@ -22,6 +25,8 @@ export class SleepApp {
   private busy = false;
   private aborter?: AbortController;
   private cancelRequested = false;
+  private task?: AppTask;
+  private subscription?: SubscriptionService;
   constructor(readonly home: string, private emit: (event: AppEvent) => void = () => {}) {
     mkdirSync(home, { recursive: true });
     this.store = new SleepStore(home);
@@ -32,7 +37,17 @@ export class SleepApp {
   private save(): void {
     const file = join(this.home, 'settings.json'); writeFileSync(`${file}.tmp`, JSON.stringify(this.settings, null, 2)); renameSync(`${file}.tmp`, file);
   }
-  setCredential(apiKey?: string): void { if (this.settings.model && apiKey) this.config = { ...this.settings.model, apiKey }; }
+  setCredential(apiKey?: string): void { if (this.settings.model && this.settings.model.authMode !== 'chatgpt' && apiKey) this.config = { ...this.settings.model, apiKey }; }
+  async initializeSubscription(options: Omit<Parameters<typeof SubscriptionService.create>[0], 'changed'>): Promise<void> {
+    if (!/^[a-f0-9-]{36}$/i.test(this.settings.subscriptionDeviceId ?? '')) { this.settings.subscriptionDeviceId = randomUUID(); this.save(); }
+    this.subscription = await SubscriptionService.create({ ...options, deviceId: this.settings.subscriptionDeviceId, changed: () => this.publish() });
+    if (this.settings.model?.authMode === 'chatgpt' && this.subscription.ready()) this.config = { ...this.settings.model };
+  }
+  private recordAction(kind: ChatAction['kind'], text?: string): string {
+    const investigation = this.store.getInvestigation(this.activeId());
+    const manager = this.session && this.sessionMatches(investigation) ? this.session.sessionManager : openChatSession(join(this.home, 'workspace'), this.sessionDir(investigation));
+    return recordChatAction(manager, { kind, text, language: this.settings.language });
+  }
   private sessionDir(investigation: Investigation): string {
     const root = join(this.home, 'sessions', investigation.id);
     return investigation.sleepEpisodeId && investigation.sleepEpisodeId !== investigation.id
@@ -44,15 +59,15 @@ export class SleepApp {
   snapshot(): AppSnapshot {
     const domain = this.store.snapshot(this.settings.activeId);
     const currentSession = domain.active && this.sessionMatches(domain.active) ? this.session : undefined;
-    let messages = chatMessages(currentSession);
+    let messages = chatMessages(currentSession, this.settings.language);
     if (!currentSession && domain.active) {
       const dir = this.sessionDir(domain.active);
-      if (existsSync(dir)) messages = chatMessages({ messages: SessionManager.continueRecent(join(this.home, 'workspace'), dir).buildSessionContext().messages } as AgentSession);
+      if (existsSync(dir)) { const manager = openChatSession(join(this.home, 'workspace'), dir); messages = chatMessages({ messages: manager.buildSessionContext().messages, sessionManager: manager }, this.settings.language); }
     }
     const workflow = domain.active ? this.workflow(domain.active) : undefined;
     const notice = workflow?.revision === domain.active?.revision
       && (workflow?.notice?.kind !== 'followup-failed' || workflow.questionId === domain.question?.id) ? workflow?.notice : undefined;
-    return { ...domain, language: this.settings.language, model: this.settings.model, configured: Boolean(this.config), messages, busy: this.busy,
+    return { ...domain, language: this.settings.language, model: this.settings.model, configured: Boolean(this.config && (this.config.authMode !== 'chatgpt' || this.subscription?.ready())), messages, busy: this.busy, task: this.task, subscription: this.subscription?.snapshot(),
       notice, localCollection: Boolean(workflow?.localCollection) };
   }
   private workflow(investigation: Investigation): SavedWorkflow | undefined {
@@ -79,9 +94,9 @@ export class SleepApp {
     if (!MODEL_FAILURES.has(code)) throw error;
     return code;
   }
-  private async followup(text: string): Promise<void> {
+  private async followup(text: string, actionId?: string): Promise<void> {
     const active = this.store.getInvestigation(this.activeId());
-    try { await this.prompt(text); this.clearNotice(); }
+    try { await this.prompt(text, actionId); this.clearNotice(); }
     catch (error) {
       const code = publicError(error, this.settings.language).code;
       if (code === 'CANCELLED' || this.cancelRequested) {
@@ -102,26 +117,33 @@ export class SleepApp {
     return createSleepTools(this.store, { investigationId: () => investigationId, episodeId, onChange: () => this.publish() }).map(tool => defineTool({
       name: tool.name, label: tool.label, description: tool.description, parameters: tool.parameters,
       execute: async (_id, params, signal) => {
-        const value = await tool.execute(params, signal);
-        const current = this.store.getInvestigation(investigationId);
-        if ((current.sleepEpisodeId ?? current.id) !== episodeId) void this.session?.abort();
-        return result(value);
+        try {
+          const value = await tool.execute(params, signal);
+          const current = this.store.getInvestigation(investigationId);
+          if ((current.sleepEpisodeId ?? current.id) !== episodeId) void this.session?.abort();
+          return result(value);
+        } catch (error) {
+          // Pi retains the failed-tool result while the model receives only the
+          // application-owned code and recovery hint, never raw local errors.
+          throw new Error(JSON.stringify(safeToolError(error)));
+        }
       },
     }));
   }
   private async getSession(): Promise<AgentSession> {
     if (!this.config) throw new Error('MODEL_REQUIRED');
+    if (this.config.authMode === 'chatgpt' && !this.subscription?.ready()) throw new Error('AUTH_REQUIRED');
     const investigation = this.store.getInvestigation(this.activeId());
     if (this.session && !this.sessionMatches(investigation)) this.dropSession();
     if (!this.session) {
       const episodeId = investigation.sleepEpisodeId ?? investigation.id;
-      this.session = await makeSession(this.home, this.config, this.tools(investigation.id, episodeId), this.sessionDir(investigation));
+      this.session = await makeSession(this.home, this.config, this.tools(investigation.id, episodeId), this.sessionDir(investigation), undefined, this.config.authMode === 'chatgpt' ? this.subscription?.runtime : undefined);
       this.sessionInvestigationId = investigation.id;
       this.sessionEpisodeId = episodeId;
     }
     return this.session;
   }
-  private async prompt(text: string): Promise<void> {
+  private async prompt(text: string, actionId?: string): Promise<void> {
     let turns = 0;
     let timedOut = false;
     let turnLimitReached = false;
@@ -148,7 +170,9 @@ export class SleepApp {
           if (this.cancelRequested) throw new Error('CANCELLED');
           const current = this.context() as Record<string, unknown>;
           const continuation = attempt ? { episodeContinuation: 'The selected sleep episode changed. Continue the original request using only this episode\'s current facts; historical statements about another sleep require the user to confirm their applicability. Do not change the selected episode again unless the request explicitly requires it.' } : {};
-          await session.prompt(`${text}\n<sleepclaw-current-context>${JSON.stringify({ ...current, ...continuation })}</sleepclaw-current-context>`, { expandPromptTemplates: true });
+          const fullPrompt = `${text}\n<sleepclaw-current-context>${JSON.stringify({ ...current, ...continuation })}</sleepclaw-current-context>`;
+          recordPromptPresentation(session.sessionManager, fullPrompt, attempt ? undefined : actionId);
+          await session.prompt(fullPrompt, { expandPromptTemplates: true });
         } catch (error) { promptError = error; }
         finally { unsubscribe(); }
         if (timedOut) throw new Error('TIMEOUT');
@@ -161,7 +185,11 @@ export class SleepApp {
         }
         if (promptError) throw promptError;
         const last = session.messages.findLast(m => m.role === 'assistant');
-        if (last?.role === 'assistant' && last.stopReason === 'error') throw new Error(last.errorMessage ?? 'REQUEST_FAILED');
+        if (last?.role === 'assistant' && last.stopReason === 'error') {
+          const error = new Error(last.errorMessage ?? 'REQUEST_FAILED');
+          if (this.config?.authMode === 'chatgpt' && publicError(error, this.settings.language).code === 'AUTH_FAILED') this.subscription?.expire();
+          throw error;
+        }
         if (last?.role === 'assistant' && last.stopReason === 'aborted') throw new Error('CANCELLED');
         return;
       }
@@ -176,8 +204,12 @@ export class SleepApp {
   }
   async request(method: string, p: Record<string, unknown> = {}): Promise<AppSnapshot> {
     if (method === 'state') return this.snapshot();
+    if (method === 'submitSubscriptionCode') { this.subscription?.submit(p.code); return this.snapshot(); }
+    if (method === 'openSubscriptionLogin') { this.subscription?.openBrowser(); return this.snapshot(); }
     if (method === 'cancel') { this.cancelRequested = true; this.aborter?.abort(); await this.session?.abort(); return this.snapshot(); }
     if (this.busy) throw new Error('BUSY');
+    const kind = method === 'loginSubscription' ? 'auth' : ['configure', 'configureSubscription'].includes(method) ? 'configure' : method === 'import' ? 'import' : ['send', 'report', 'retryFollowup'].includes(method) || (method === 'answer' && this.config && !p.skip && !this.snapshot().localCollection) ? 'model' : undefined;
+    this.task = kind ? { kind, cancellable: true } : undefined;
     this.busy = true; this.cancelRequested = false; this.aborter = new AbortController(); this.publish();
     try {
       switch (method) {
@@ -194,6 +226,27 @@ export class SleepApp {
           this.dropSession(); this.config = config;
           const { apiKey: _key, ...saved } = config; this.settings.model = saved; this.save(); break;
         }
+        case 'loginSubscription':
+        case 'configureSubscription': {
+          if (!this.subscription) throw new Error('AUTH_UNAVAILABLE');
+          const model = this.subscription.model(p.model);
+          if (method === 'loginSubscription') {
+            const timer = setTimeout(() => this.aborter?.abort(), 300_000);
+            try { await this.subscription.login(this.aborter.signal); } finally { clearTimeout(timer); }
+          }
+          if (!this.subscription.ready()) throw new Error('AUTH_REQUIRED');
+          const config: ModelConfig = { provider: SUBSCRIPTION_PROVIDER, model, authMode: 'chatgpt' };
+          this.task = { kind: 'configure', cancellable: true }; this.publish();
+          await testConnection(this.home, config, this.aborter.signal, this.subscription.runtime);
+          if (this.cancelRequested) throw new Error('CANCELLED');
+          this.dropSession(); this.config = config; this.settings.model = config; this.save(); break;
+        }
+        case 'logoutSubscription': {
+          if (!this.subscription) throw new Error('AUTH_UNAVAILABLE');
+          await this.subscription.logout();
+          if (this.settings.model?.authMode === 'chatgpt') { this.dropSession(); this.config = undefined; }
+          break;
+        }
         case 'new': {
           this.dropSession();
           const inv = this.store.createInvestigation(String(p.goal ?? ''), this.settings.language, (p.scope ?? 'main') as SleepScope);
@@ -201,7 +254,7 @@ export class SleepApp {
         }
         case 'select': {
           this.store.selectInvestigation(String(p.id)); this.dropSession(); this.settings.activeId = String(p.id); this.save();
-          if (this.config) await this.getSession(); break;
+          if (this.snapshot().configured) await this.getSession(); break;
         }
         case 'import': await this.store.importFile(String(p.path), { signal: this.aborter.signal, onProgress: count => this.emit({ type: 'progress', message: this.settings.language === 'zh' ? `已读取 ${count} 条记录` : `Read ${count} records` }) }); break;
         case 'target': {
@@ -221,31 +274,33 @@ export class SleepApp {
         case 'retryFollowup': {
           if (this.snapshot().notice?.kind !== 'followup-failed') throw new Error('NO_PENDING_FOLLOWUP');
           if (!this.config) throw new Error('MODEL_REQUIRED');
-          await this.followup('The previous answer is already saved in the current facts. Retry only the interrupted follow-up. Read the current context; do not save or replay the old answer again. Ask exactly one useful next question, or show the pending fixed question.');
+          await this.followup('The previous answer is already saved in the current facts. Retry only the interrupted follow-up. Read the current context; do not save or replay the old answer again. Ask exactly one useful next question, or show the pending fixed question.', this.recordAction('retry'));
           if (!this.snapshot().notice) this.updateWorkflow(value => { value.localCollection = false; });
           break;
         }
         case 'answer': {
           const question = this.snapshot().question;
           this.store.answer(this.activeId(), (p.value ?? null) as FactValue, Boolean(p.skip));
+          const actionId = this.recordAction(p.skip ? 'skip' : 'answer', p.value == null ? undefined : String(p.value));
           this.clearNotice();
-          if (this.config && !p.skip && !this.snapshot().localCollection) await this.followup(`The user answered the saved question ${question?.topic}: ${String(p.value)}. The literal answer is saved. Extract additional explicitly stated facts if any; inspect relevant data if useful, then ask exactly one useful next question or show the next fixed question.`);
+          if (this.config && !p.skip && !this.snapshot().localCollection) await this.followup(`The user answered the saved question ${question?.topic}: ${String(p.value)}. The literal answer is saved. Extract additional explicitly stated facts if any; inspect relevant data if useful, then ask exactly one useful next question or show the next fixed question.`, actionId);
           break;
         }
         case 'fact': this.store.setFact(this.activeId(), { topic: String(p.topic), value: (p.value ?? null) as FactValue, scope: p.scope as 'profile' | 'sleep', status: p.status as 'known' | 'unknown' | undefined }); break;
         case 'send': {
           const text = String(p.text ?? '').trim(); if (!text || text.length > 20000) throw new Error('INVALID_MESSAGE');
           if (!this.snapshot().active) { const inv = this.store.createInvestigation(text, this.settings.language); this.settings.activeId = inv.id; this.save(); }
-          await this.prompt(text); break;
+          await this.prompt(text, this.recordAction('send', text)); break;
         }
         case 'reportLocal': {
-          this.store.buildReport(this.activeId()); this.clearNotice(); break;
+          this.store.buildReport(this.activeId()); this.recordAction('report-local'); this.clearNotice(); break;
         }
         case 'report': {
+          const actionId = this.recordAction(this.config ? 'report' : 'report-local');
           if (this.config) {
             const active = this.store.getInvestigation(this.activeId());
             let failure: string | undefined;
-            try { await this.prompt('The user requests the report now. Stop asking questions. Use sleep_report to generate the report using the current facts and bounded data, with limitations and one practical action.'); }
+            try { await this.prompt('The user requests the report now. Stop asking questions. Use sleep_report to generate the report using the current facts and bounded data, with limitations and one practical action.', actionId); }
             catch (error) { failure = this.recoverableFailure(error, active.sleepEpisodeId ?? active.id); }
             const state = this.snapshot();
             const report = reportsForEpisode(state.reports, state.active).find(r => r.factRevision === state.active!.revision && r.status === 'complete');
@@ -283,8 +338,11 @@ export class SleepApp {
         default: throw new Error('UNKNOWN_METHOD');
       }
     } catch (error) {
-      const sanitized = publicError(error, this.settings.language); this.emit({ type: 'error', ...sanitized }); throw new Error(sanitized.code);
-    } finally { this.busy = false; this.aborter = undefined; this.publish(); }
+      const cancellation = method === 'import' && publicError(error, this.settings.language).code === 'CANCELLED';
+      const sanitized = publicError(cancellation ? new Error('IMPORT_CANCELLED') : error, this.settings.language);
+      if (this.config?.authMode === 'chatgpt' && sanitized.code === 'AUTH_FAILED') this.subscription?.expire();
+      this.emit({ type: 'error', ...sanitized }); throw new Error(sanitized.code);
+    } finally { this.busy = false; this.task = undefined; this.aborter = undefined; this.publish(); }
     return this.snapshot();
   }
   async close(): Promise<void> { this.aborter?.abort(); await this.session?.abort(); this.dropSession(); this.store.close(); }

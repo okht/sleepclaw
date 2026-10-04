@@ -17,11 +17,15 @@ export interface Metric { key: string; value: number | null; unit: string; sourc
 export interface Analysis { start?: string; end?: string; source?: string; metrics: Metric[]; stages: Record<string, number>; warnings: string[]; recordCount: number; inBedBoundaryClipped: boolean }
 export interface Report { id: string; investigationId: string; sleepEpisodeId?: string; revision: number; factRevision: number; language: Language; createdAt: string; title: string; summary: string; metrics: Metric[]; dimensions: Array<{ key: string; text: string; score: number | null }>; score: number | null; scoreVersion: string; limitations: string[]; action: string; aiInterpretation?: string; status: 'complete' | 'stale'; markdown: string; reportedFacts?: Fact[]; basis?: { start?: string; end?: string; source?: string; scope: SleepScope }; timeline?: Array<{ start: string; end: string; stage: string }> }
 export interface Feedback { reportId: string; choice: 'accepted' | 'cannot' | 'unhelpful' | 'later'; note?: string; createdAt: string }
-export interface DomainSnapshot { investigations: Investigation[]; active?: Investigation; facts: Fact[]; imports: ImportSummary[]; candidates: SleepCandidate[]; reports: Report[]; feedback: Feedback[]; question?: Question; canResume?: boolean }
-export interface ModelConfig { provider: string; model: string; baseUrl?: string; apiKey?: string; protocol?: 'openai-completions' | 'anthropic-messages' }
+/** Completion covers fixed basic questions only; unknown includes skipped or uncertain answers. */
+export interface CollectionProgress { total: number; completed: number; known: number; skipped: number; remaining: number; phase: 'basics' | 'followup' | 'ready' | 'paused' | 'reported' }
+export interface DomainSnapshot { investigations: Investigation[]; active?: Investigation; facts: Fact[]; imports: ImportSummary[]; candidates: SleepCandidate[]; reports: Report[]; feedback: Feedback[]; question?: Question; canResume?: boolean; collectionProgress?: CollectionProgress }
+export interface ModelConfig { provider: string; model: string; baseUrl?: string; apiKey?: string; authMode?: 'api-key' | 'chatgpt'; protocol?: 'openai-completions' | 'anthropic-messages' }
 export interface ChatMessage { id: string; role: 'user' | 'assistant'; text: string }
 export interface AppNotice { kind: 'report-local' | 'report-saved' | 'followup-failed'; code: string }
-export interface AppSnapshot extends DomainSnapshot { language: Language; model?: Omit<ModelConfig, 'apiKey'>; configured: boolean; messages: ChatMessage[]; busy: boolean; notice?: AppNotice; localCollection?: boolean }
+export interface SubscriptionState { status: 'signed-out' | 'signing-in' | 'signed-in' | 'expired'; models: Array<{ id: string; name: string }>; canOpenBrowser?: boolean; prompt?: { message: string; placeholder?: string }; progress?: string }
+export interface AppTask { kind: 'configure' | 'import' | 'model' | 'auth'; cancellable: boolean }
+export interface AppSnapshot extends DomainSnapshot { language: Language; model?: Omit<ModelConfig, 'apiKey'>; configured: boolean; messages: ChatMessage[]; busy: boolean; notice?: AppNotice; localCollection?: boolean; task?: AppTask; subscription?: SubscriptionState }
 export type AppEvent = { type: 'state'; state: AppSnapshot } | { type: 'delta'; text: string } | { type: 'progress'; message: string } | { type: 'error'; code: string; message: string };
 export interface DesktopBridge { request(method: string, params?: Record<string, unknown>): Promise<unknown>; onEvent(callback: (event: AppEvent) => void): () => void; chooseFile(): Promise<string | null> }
 declare global { interface Window { sleepclaw: DesktopBridge } }
