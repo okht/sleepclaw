@@ -18,29 +18,54 @@ function union(intervals: Interval[]): Interval[] {
 const duration = (intervals: Interval[]) => union(intervals).reduce((sum, item) => sum + item.end - item.start, 0);
 const unique = (records: HealthRecord[]) => [...new Map(records.map((record) => [record.id, record])).values()];
 
+/** Padding may extend one sleep episode, but must never join two episodes. */
+function extendEpisodeBounds(episodes: Interval[], bounds: Interval[], padding: Interval[], touching: boolean): void {
+  let first = 0;
+  for (const interval of union(padding)) {
+    while (first < episodes.length && (touching ? episodes[first].end < interval.start : episodes[first].end <= interval.start)) first++;
+    const owner = episodes[first], next = episodes[first + 1];
+    if (!owner || (touching ? owner.start > interval.end : owner.start >= interval.end)) continue;
+    if (next && (touching ? next.start <= interval.end : next.start < interval.end)) continue;
+    bounds[first].start = Math.min(bounds[first].start, interval.start);
+    bounds[first].end = Math.max(bounds[first].end, interval.end);
+  }
+}
+
 export function identifyCandidates(records: HealthRecord[]): SleepCandidate[] {
-  const grouped = new Map<string, Interval[]>();
+  const grouped = new Map<string, { asleep: Interval[]; awake: Interval[]; inBed: Interval[] }>();
   for (const record of unique(records)) {
-    if (record.type !== 'sleep' || !ASLEEP.has(String(record.value))) continue;
-    const list = grouped.get(record.source) ?? [];
-    list.push({ start: Date.parse(record.start), end: Date.parse(record.end) });
-    grouped.set(record.source, list);
+    if (record.type !== 'sleep') continue;
+    const kind = ASLEEP.has(String(record.value)) ? 'asleep' : record.value === 'awake' ? 'awake' : record.value === 'inBed' ? 'inBed' : undefined;
+    const start = Date.parse(record.start), end = Date.parse(record.end);
+    if (!kind || !Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
+    const group = grouped.get(record.source) ?? { asleep: [], awake: [], inBed: [] };
+    group[kind].push({ start, end });
+    grouped.set(record.source, group);
   }
   const candidates: SleepCandidate[] = [];
-  for (const [source, raw] of grouped) {
-    let current: Interval[] = [];
-    const finish = () => {
-      if (!current.length) return;
-      const start = new Date(current[0].start).toISOString();
-      const end = new Date(current.at(-1)!.end).toISOString();
-      const id = createHash('sha256').update(JSON.stringify([source, start, end])).digest('hex');
-      candidates.push({ id, source, start, end, asleepMinutes: minutes(duration(current)) });
-    };
-    for (const interval of union(raw)) {
-      if (current.length && interval.start - current.at(-1)!.end > CANDIDATE_GAP_MINUTES * 60_000) { finish(); current = []; }
-      current.push(interval);
+  for (const [source, group] of grouped) {
+    const episodes: Array<Interval & { asleepMs: number }> = [];
+    for (const interval of union(group.asleep)) {
+      const last = episodes.at(-1);
+      if (last && interval.start - last.end <= CANDIDATE_GAP_MINUTES * 60_000) {
+        last.end = interval.end;
+        last.asleepMs += interval.end - interval.start;
+      } else episodes.push({ ...interval, asleepMs: interval.end - interval.start });
     }
-    finish();
+    const bounds = episodes.map(({ start, end }) => ({ start, end }));
+    extendEpisodeBounds(episodes, bounds, group.inBed, false);
+    extendEpisodeBounds(episodes, bounds, group.awake, true);
+    // Conflicting padding from different kinds can overlap even when each has one owner.
+    // Keep both original episodes in that case; clipped in-bed metrics stay unknown below.
+    const ambiguous = new Set<number>();
+    for (let i = 1; i < bounds.length; i++) if (bounds[i - 1].end > bounds[i].start) { ambiguous.add(i - 1); ambiguous.add(i); }
+    for (const [index, episode] of episodes.entries()) {
+      const range = ambiguous.has(index) ? episode : bounds[index];
+      const start = new Date(range.start).toISOString();
+      const end = new Date(range.end).toISOString();
+      const id = createHash('sha256').update(JSON.stringify([source, start, end])).digest('hex');
+      candidates.push({ id, source, start, end, asleepMinutes: minutes(episode.asleepMs) });
+    }
   }
   return candidates.sort((a, b) => Date.parse(b.start) - Date.parse(a.start) || a.source.localeCompare(b.source));
 }
@@ -88,17 +113,19 @@ export function analyzeRecords(records: HealthRecord[], options: { start?: strin
   const asleepMs = duration(asleep);
   const awakeMs = duration(awake);
   const inBedMs = duration(inBed);
+  const inBedBoundaryClipped = sleep.some((r) => r.value === 'inBed' && (Date.parse(r.start) < from || Date.parse(r.end) > to));
   const conflict = asleepMs + awakeMs > duration([...asleep, ...awake]);
   if (conflict) warnings.push('同一来源的清醒与睡眠记录存在冲突，相关总时长暂不计算。');
   const stages = stageDurations(sleep);
   if (stages.unknown) warnings.push('部分睡眠阶段互相冲突，已单列为未知阶段。');
-  const completeInBed = inBedMs > 0 && asleepMs > 0 && !conflict && duration([...inBed, ...asleep, ...awake]) === inBedMs && duration([...asleep, ...awake]) === inBedMs;
+  const completeInBed = inBedMs > 0 && asleepMs > 0 && !conflict && !inBedBoundaryClipped && duration([...inBed, ...asleep, ...awake]) === inBedMs && duration([...asleep, ...awake]) === inBedMs;
   const metrics: Metric[] = [
     { key: 'totalSleepMinutes', value: asleep.length && !conflict ? minutes(asleepMs) : null, unit: 'min', source: 'derived', note: '设备标记为睡眠的区间并集；卧床和重复阶段不会重复相加。' },
     { key: 'awakeMinutes', value: awake.length && !conflict ? minutes(awakeMs) : null, unit: 'min', source: 'derived', note: '仅统计设备记录到的清醒，缺少记录不等于零清醒。' },
     { key: 'inBedMinutes', value: inBed.length ? minutes(inBedMs) : null, unit: 'min', source: 'derived' },
     { key: 'sleepEfficiencyPercent', value: completeInBed ? Math.round(asleepMs / inBedMs * 10_000) / 100 : null, unit: '%', source: 'derived', note: '需要可靠卧床范围和完整睡眠／清醒覆盖；资料不足时不计算。' },
   ];
+  if (inBedBoundaryClipped) warnings.push('所选时段截断了原始卧床记录，不能据此计算完整卧床期间的睡眠效率。');
   if (!completeInBed) warnings.push('卧床范围或清醒记录不完整，暂不计算睡眠效率。');
   const physiology: Array<[HealthRecord['type'], string, string, string[]]> = [
     ['heartRate', 'heartRateMean', 'bpm', ['count/min', 'bpm']],
@@ -127,5 +154,5 @@ export function analyzeRecords(records: HealthRecord[], options: { start?: strin
     if (!options.start && (!start || Date.parse(r.start) < Date.parse(start))) start = r.start;
     if (!options.end && (!end || Date.parse(r.end) > Date.parse(end))) end = r.end;
   }
-  return { start, end, source, metrics, stages, warnings, recordCount: selected.length };
+  return { start, end, source, metrics, stages, warnings, recordCount: selected.length, inBedBoundaryClipped };
 }

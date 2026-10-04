@@ -23,7 +23,8 @@ test('reuses interval union and detailed stages without double-counting inBed or
   assert.equal(result.methodVersion, HEALTH_EVIDENCE_METHOD_VERSION);
   assert.equal(metric(result, 'totalSleepMinutes'), 60);
   assert.equal(metric(result, 'inBedMinutes'), 60);
-  assert.equal(metric(result, 'sleepEfficiencyPercent'), 100);
+  assert.equal(metric(result, 'sleepEfficiencyPercent'), null);
+  assert.ok(result.warnings.some((entry) => entry.code === 'in_bed_boundary_clipped'));
   assert.equal(metric(result, 'awakeMinutes'), null);
   assert.deepEqual(result.sleep.stages, { core: 40, rem: 20 });
   assert.equal(result.sleep.observedMinutes, 60);

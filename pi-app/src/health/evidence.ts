@@ -196,6 +196,7 @@ export function analyzeHealthEvidence(records: HealthRecord[], options: HealthEv
   });
   const warnings: Message[] = [];
   const warn = (code: string, zh: string, english: string) => warnings.push({ code, text: t(zh, english) });
+  if (base.inBedBoundaryClipped) warn('in_bed_boundary_clipped', '所选时段截断了原始卧床记录，不能据此计算完整卧床期间的睡眠效率。', 'The selected window clips an original in-bed record; sleep efficiency for the full time in bed cannot be calculated.');
   if (!coverage.observedMs) warn('no_sleep_observations', '没有可用的睡眠或清醒阶段记录；卧床记录不能补齐阶段。', 'No usable sleep or awake stages; in-bed records cannot fill stage coverage.');
   if (coverage.unobservedMs) warn('unobserved_sleep_intervals', '部分时段没有睡眠或清醒记录；这些缺口保持未知，不计为清醒。', 'Some intervals have no sleep or awake records; these gaps remain unknown and are not counted as awake.');
   if (coverage.sleepAwakeConflictMs) warn('sleep_awake_conflict', '睡眠与清醒标签重叠；相关总时长及效率保持为空。', 'Sleep and awake labels overlap; corresponding totals and efficiency remain null.');
